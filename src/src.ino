@@ -12,9 +12,19 @@
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
 /*------------------------------------Local definitions------------------------------------------------------------------------------------------*/
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
-#define PERIOD_MILLSEC_1000    1000
-#define PERIOD_MILLSEC_500     500
-#define PERIOD_MILLSEC_250     250
+#define PERIOD_MILLSEC_250      250
+#define PERIOD_MILLSEC_500      500
+#define PERIOD_SECOND_1         1000
+#define PERIOD_SECOND_5         5000
+#define PERIOD_SECOND_10        10000
+#define PERIOD_SECOND_15        15000
+#define PERIOD_MINUTE_1         60000
+#define PERIOD_MINUTE_10        600000
+#define PERIOD_MINUTE_15        900000
+#define PERIOD_HOUR_1           3600000
+
+
+
 
 
 
@@ -28,19 +38,19 @@ const int POT = 35;
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
 String              WIFI_SSID;
 String              WIFI_PASSWORD;
-String              MQTT_SERVER = "192.168.1.225";                            // MQTT Server IP, same of Home Assistant
+String              MQTT_SERVER = "192.168.1.225";                            // MQTT Server IP
 String              MQTT_USER;                                                // MQTT Server User Name
 String              MQTT_PASSWORD;                                            // MQTT Server password
 int                 MQTT_PORT = 1883;                                         // MQTT Server Port
 
 
 
-const char*         DEVICE_MODEL = "your device model";                       // Hardware Model
-const char*         SOFTWARE_VERSION = "version";                             // Firmware Version
-const char*         MANUFACTURER = "manufacturer";                            // Manufacturer Name
-const String        DEVICE_NAME = "name";                                     // Device Name
-const String        MQTT_TOPIC_STATUS = "your topic/" + DEVICE_NAME;
-const String        MQTT_TOPIC_STATE_SUFFIX = "/state";                       // MQTT Topic 
+const char*         DEVICE_MODEL = "esp32Serra";                              // Hardware Model
+const char*         SOFTWARE_VERSION = "0.1";                                 // Firmware Version
+const char*         MANUFACTURER = "Speed224";                                // Manufacturer Name
+const String        DEVICE_NAME = "serra";                                    // Device Name
+const String        MQTT_TOPIC_STATUS = "esp32iot/" + DEVICE_NAME;
+const String        MQTT_TOPIC_STATE_SUFFIX = "/state";                       // MQTT Topic   
 const String        MQTT_TOPIC_HA_PREFIX = "homeassistant/";
 const String        MQTT_TOPIC_DISCOVERY_SUFFIX = "/config";
             
@@ -52,12 +62,16 @@ WiFiClient          WiFiClient;
 PubSubClient        mqttPubSub(WiFiClient);
 Preferences         preferences;
 
-unsigned long       Time = 0;
+
 int                 count = 0;
 int                 mqttCounterConn = 0;
 bool                InitSystem = true;
 String              UNIQUE_ID;
 bool                SendMqttData = false;
+
+unsigned long       dataPreviousMillis = 0;
+unsigned long       wifiPreviousMillis = 0;
+unsigned long       currentMillis;
 
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
 /*------------------------------------SETUP------------------------------------------------------------------------------------------------------*/
@@ -110,13 +124,16 @@ void setup()
   //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
   // Wifi Init
   //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-  wifi_setup();
+  wifiSetup();
 
   //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
   // MQTT Init
   //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
   mqttPubSub.setServer(MQTT_SERVER.c_str(), MQTT_PORT);
   mqttPubSub.setCallback(MqttReceiverCallback);
+
+
+
 }
 
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
@@ -124,6 +141,8 @@ void setup()
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
 void loop() 
 {
+  currentMillis = millis();
+
     //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     // MQTT Connection
     //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -136,7 +155,7 @@ void loop()
     }else{
       delay(10000);
       Serial.println("Retry");
-      wifi_setup();
+      wifiSetup();
     }
 
     if(InitSystem)
@@ -147,13 +166,9 @@ void loop()
         MqttHomeAssistantDiscovery();     // Send Discovery Data
     }
 
-    if(millis() - Time > PERIOD_MILLSEC_500)  // Every 500 [msec]
+    if(currentMillis - dataPreviousMillis > PERIOD_SECOND_1)  // Every 1000 [msec]
     {
-        Time = millis();
-
-        ////////////////////////////////////////////////////////////////
-        // DIGITAL INPUTS
-        ////////////////////////////////////////////////////////////////
+        dataPreviousMillis = currentMillis;
        
         
         if(count++ == 20 || SendMqttData) // Every 10 [sec] or if input status changed
@@ -190,19 +205,31 @@ void loop()
           }
         }
     }
+
+
+  
+  
+  if (currentMillis - wifiPreviousMillis >= PERIOD_MINUTE_15) {
+    if(WiFi.status() != WL_CONNECTED)
+      wifiSetup();
+
+    wifiPreviousMillis = currentMillis;
+  }
+
 }
 
 
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
 /*------------------------------------ Public Functions -----------------------------------------------------------------------------------------*/
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
-void wifi_setup() 
+void wifiSetup() 
 {
     WiFi.mode(WIFI_STA);
 
     int counter = 0;
     byte mac[6];
     delay(10);
+    
     // We start by connecting to a WiFi network
     Serial.print("Connecting to ");
     Serial.println(WIFI_SSID);
@@ -311,7 +338,7 @@ void MqttHomeAssistantDiscovery()
     }
 }
 
-void MqttReceiverCallback(char* topic, byte* inFrame, unsigned int length) 
+void MqttReceiverCallback(char* topic, byte* payload, unsigned int length) 
 {
     Serial.print("Message arrived on topic: ");
     Serial.print(topic);
@@ -321,8 +348,8 @@ void MqttReceiverCallback(char* topic, byte* inFrame, unsigned int length)
     
     for (int i = 0; i < length; i++) 
     {
-        Serial.print((char)inFrame[i]);
-        messageTemp += (char)inFrame[i];
+        Serial.print((char)payload[i]);
+        messageTemp += (char)payload[i];
     }
     Serial.println();
   
