@@ -19,11 +19,10 @@
 #define PERIOD_SECOND_10        10000
 #define PERIOD_SECOND_15        15000
 #define PERIOD_MINUTE_1         60000
+#define PERIOD_MINUTE_5         300000
 #define PERIOD_MINUTE_10        600000
 #define PERIOD_MINUTE_15        900000
 #define PERIOD_HOUR_1           3600000
-
-
 
 
 
@@ -53,12 +52,18 @@ const String        MQTT_TOPIC_STATUS = "esp32iot/" + DEVICE_NAME;
 const String        MQTT_TOPIC_STATE_SUFFIX = "/state";                       // MQTT Topic   
 const String        MQTT_TOPIC_HA_PREFIX = "homeassistant/";
 const String        MQTT_TOPIC_DISCOVERY_SUFFIX = "/config";
-            
+
+const String        MQTT_TOPIC_OPTION = MQTT_TOPIC_HA_PREFIX + MQTT_TOPIC_STATUS + "/option";
+const String        MQTT_TOPIC_HA_STATUS = MQTT_TOPIC_HA_PREFIX + "status";
+
+const int           topicsNumber = 2;
+const String        topics[topicsNumber] = {MQTT_TOPIC_HA_STATUS, MQTT_TOPIC_OPTION};
+
 
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
 /*------------------------------------Public variables-------------------------------------------------------------------------------------------*/
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
-wifiClient          wifiClient;
+WiFiClient          wifiClient;
 PubSubClient        mqttPubSub(wifiClient);
 Preferences         preferences;
 
@@ -66,6 +71,9 @@ Preferences         preferences;
 int                 count = 0;
 String              UNIQUE_ID;
 bool                sendMqttData = false;
+
+//DEFAULT wait time for sending data
+unsigned int        sendDataPeriod = PERIOD_SECOND_5;
 
 unsigned long       dataPreviousMillis = 0;
 unsigned long       wifiPreviousMillis = 0;
@@ -132,7 +140,9 @@ void setup()
   mqttPubSub.setServer(MQTT_SERVER.c_str(), MQTT_PORT);
   mqttPubSub.setCallback(mqttReceiverCallback);
   mqttPubSub.setBufferSize(600);
-  mqttTopicSubscribe("homeassistant/status");
+
+  mqttConnect();
+  mqttHomeAssistantDiscovery();
 
 }
 
@@ -142,52 +152,37 @@ void setup()
 void loop() 
 {
   currentMillis = millis();
+  mqttPubSub.loop(); //call often docs
 
-    
-    if(WiFi.status() == WL_CONNECTED)
-    {
-        if(!mqttPubSub.connected())
-            mqttConnect();
-        else
-            mqttPubSub.loop();
+
+  if(currentMillis - dataPreviousMillis > sendDataPeriod)
+  {
+    dataPreviousMillis = currentMillis;
+
+    if(!mqttPubSub.connected())
+      mqttConnect();
+    else{
+     
+      StaticJsonDocument<200> payload;  
+      //payload["temp"] = Temperature;
+      //payload["hum"] = Humidity;
+      //payload["inputstatus"] = strDoorStatus;
+      payload["pot"] = analogRead(POT);
+
+      String strPayload;
+      serializeJson(payload, strPayload);
+
+      String name = "_pot";
+      String stateTopic = MQTT_TOPIC_HA_PREFIX + "sensor/" + MQTT_TOPIC_STATUS + name + MQTT_TOPIC_STATE_SUFFIX;
+      bool err = mqttPubSub.publish(stateTopic.c_str(), strPayload.c_str());
+      if(!err)
+        Serial.println("MQTT: ERROR cannot send data");
+      else
+        Serial.println("MQTT: Data SENT");
+      sendMqttData = false;
+      
     }
-
-    if(currentMillis - dataPreviousMillis > PERIOD_SECOND_1)  // Every 1000 [msec]
-    {
-      dataPreviousMillis = currentMillis;
-        
-      if(count++ == 20 || sendMqttData) // Every 10 [sec] or if input status changed
-      {
-        count = 0;
-
-        sendMqttData = true;
-      }
-
-      //SEND MQTT DATA
-      if(sendMqttData == true)        
-      {
-        StaticJsonDocument<200> payload;  
-        //payload["temp"] = Temperature;
-        //payload["hum"] = Humidity;
-        //payload["inputstatus"] = strDoorStatus;
-        payload["pot"] = analogRead(POT);
-
-        String strPayload;
-        serializeJson(payload, strPayload);
-
-        if(mqttPubSub.connected())
-        {
-          String name = "_pot";
-          String stateTopic = MQTT_TOPIC_HA_PREFIX + "sensor/" + MQTT_TOPIC_STATUS + name + MQTT_TOPIC_STATE_SUFFIX;
-          mqttPubSub.publish(stateTopic.c_str(), strPayload.c_str()); 
-          Serial.println("MQTT: Send Data!!!");
-          Serial.println(" ");
-          Serial.println(" ");
-          sendMqttData = false;
-        }
-      }
-    }
-
+  }
 
   
   
@@ -198,11 +193,23 @@ void loop()
     wifiPreviousMillis = currentMillis;
   }
 
+
+
   if(Serial.available())
     command = Serial.read();
+
   switch (command) {
-  case 'd':
-  break;
+    case 'd':
+      Serial.print("mqtt conn: ");
+      Serial.println(mqttPubSub.connected());
+    break;
+    case 'w':
+      wifiSetup();
+      mqttConnect();
+    break;
+    case 'R':
+      ESP.restart();
+    break;
   }
 
 }
@@ -213,6 +220,7 @@ void loop()
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
 void wifiSetup() 
 {
+    WiFi.disconnect();
     WiFi.mode(WIFI_STA);
 
     int counter = 0;
@@ -251,30 +259,50 @@ void wifiSetup()
 
 void mqttConnect() 
 {
-    // Loop until we're reconnected
-    if (!mqttPubSub.connected())
+  mqttPubSub.disconnect();
+  if (WiFi.status() == WL_CONNECTED)
+  {
+    if(!mqttPubSub.connected())
     {
-        Serial.print("Attempting MQTT connection...");
-        // Attempt to connect
-        if (mqttPubSub.connect(DEVICE_NAME.c_str(), MQTT_USER.c_str(), MQTT_PASSWORD.c_str())) 
-        {
-            Serial.println("connected");
-        } else 
-        {
-            Serial.print("failed, rc=");
-            Serial.print(mqttPubSub.state());
-        }
-    }  
+      Serial.print("Attempting MQTT connection...");
+      // Attempt to connect
+      if (mqttPubSub.connect(DEVICE_NAME.c_str(), MQTT_USER.c_str(), MQTT_PASSWORD.c_str())) 
+      {
+        Serial.println("connected");
+        //subscribe to topics
+        mqttTopicsSubscribe(topics, topicsNumber);
+      } else 
+      {
+        Serial.print("failed, rc=");
+        Serial.print(mqttPubSub.state());
+        Serial.println();
+      }
+    } 
+  }else{
+    Serial.println("Cannot connect to mqtt because wifi is offline");
+  }
 }
 
-//return false in case of error
-String mqttTopicSubscribe(char* topic){
+/*
+String mqttTopicSubscribe(const char* topic){
   bool success = mqttPubSub.subscribe(topic);
   if(success)
     return "Subscribed";
   else
     return "ERROR connection lost or message too large" ;
 }
+*/
+void mqttTopicsSubscribe(const String topics[topicsNumber], const int topicsNumber){
+  for(int i = 0; i < topicsNumber; i++){
+    String success = (mqttPubSub.subscribe(topics[i].c_str())) ? "Subscribed" : "ERROR cannot subscribe";
+    Serial.print(success);
+    Serial.print(" to topic ");
+    Serial.print(topics[i]);
+    Serial.println();
+  }
+      
+}
+
 
 
 void mqttHomeAssistantDiscovery()
@@ -333,22 +361,35 @@ void mqttHomeAssistantDiscovery()
 
 void mqttReceiverCallback(char* topic, byte* payload, unsigned int length) 
 {
+
     Serial.print("Message arrived on topic: ");
     Serial.print(topic);
     Serial.print(". Message: ");
+
     byte state = 0;
-    String messageTemp;
+
+    String message;
+
+    StaticJsonDocument<600> json;
     
     for (int i = 0; i < length; i++) 
     {
         Serial.print((char)payload[i]);
-        messageTemp += (char)payload[i];
+        message += (char)payload[i];
     }
     Serial.println();
-  
-    if(String(topic) == String("homeassistant/status")) 
+
+    if(String(topic) == String(MQTT_TOPIC_OPTION)) 
     {
-        if(messageTemp == "online")
+      deserializeJson(json, payload);
+      sendDataPeriod = json["sendDataPeriod"];
+      Serial.print("sendDataPeriod: ");
+      Serial.println(sendDataPeriod);
+    }
+
+    if(String(topic) == String(MQTT_TOPIC_HA_STATUS)) 
+    {
+        if(message == "online")
             mqttHomeAssistantDiscovery();
     }
 }
