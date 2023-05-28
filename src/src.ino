@@ -30,7 +30,11 @@
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
 /*------------------------------------I/O Definitions--------------------------------------------------------------------------------------------*/
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
-const int POT = 35; 
+#define POT 35
+#define LIGHT 32
+
+const String              POT_NAME = "pot";
+const String              LIGHT_NAME = "light";
 
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
 /*------------------------------------Configuration----------------------------------------------------------------------------------------------*/
@@ -49,16 +53,23 @@ const char*         SOFTWARE_VERSION = "0.1";                                 //
 const char*         MANUFACTURER = "Speed224";                                // Manufacturer Name
 const String        DEVICE_NAME = "serra";                                    // Device Name
 const String        MQTT_TOPIC_STATUS = "esp32iot/" + DEVICE_NAME;
-const String        MQTT_TOPIC_STATE_SUFFIX = "/state";                       // MQTT Topic   
 const String        MQTT_TOPIC_HA_PREFIX = "homeassistant/";
 const String        MQTT_TOPIC_DISCOVERY_SUFFIX = "/config";
+const String        MQTT_TOPIC_STATE_SUFFIX = "/state";
+const String        MQTT_TOPIC_COMMAND_SUFFIX = "/command";
+
 
 const String        MQTT_TOPIC_OPTION = MQTT_TOPIC_HA_PREFIX + MQTT_TOPIC_STATUS + "/option";
-const String        MQTT_TOPIC_COMMAND = MQTT_TOPIC_HA_PREFIX + MQTT_TOPIC_STATUS + "/command";
+const String        MQTT_TOPIC_COMMAND = MQTT_TOPIC_HA_PREFIX + MQTT_TOPIC_STATUS + MQTT_TOPIC_COMMAND_SUFFIX;
 const String        MQTT_TOPIC_HA_STATUS = MQTT_TOPIC_HA_PREFIX + "status";
 
-const int           topicsNumber = 3;
-const String        topics[topicsNumber] = {MQTT_TOPIC_HA_STATUS, MQTT_TOPIC_OPTION, MQTT_TOPIC_COMMAND};
+//OBJECT COMMAND TOPIC
+
+const String        MQTT_LIGHT_TOPIC =  MQTT_TOPIC_HA_PREFIX + "light/" + MQTT_TOPIC_STATUS + "_" + LIGHT_NAME;
+const String        MQTT_LIGHT_TOPIC_COMMAND =  MQTT_TOPIC_HA_PREFIX + "light/" + MQTT_TOPIC_STATUS + "_" + LIGHT_NAME + MQTT_TOPIC_COMMAND_SUFFIX; 
+
+const int           topicsNumber = 4;
+const String        topics[topicsNumber] = {MQTT_TOPIC_HA_STATUS, MQTT_TOPIC_OPTION, MQTT_TOPIC_COMMAND, MQTT_LIGHT_TOPIC_COMMAND};
 
 
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
@@ -83,15 +94,29 @@ unsigned long       currentMillis;
 char                command;
 
 
-String              POT_NAME = "pot";
+
+bool                lightState = true;
+
 
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
 /*------------------------------------SETUP------------------------------------------------------------------------------------------------------*/
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
 void setup() 
 {
+
+
+
   Serial.begin(115200);
   Serial.println("Inizio setup");
+
+
+  //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+  // Input output Pin definitions
+  //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+  pinMode(POT, INPUT);
+  pinMode(LIGHT, OUTPUT);
+
+
 
   preferences.begin("credentials", true);
 
@@ -110,15 +135,7 @@ void setup()
   if (WIFI_SSID == "" || WIFI_PASSWORD == ""){
     Serial.println("No values saved for ssid or password");
   }
-
-  
-
-  //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-  // Input output Pin definitions
-  //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-  pinMode(POT, INPUT);
-
-
+ 
 
   delay(500);
 
@@ -146,6 +163,12 @@ void setup()
   mqttPubSub.setBufferSize(600);
 
   mqttConnect();
+
+
+
+  //ALL THE LOGIC THAT MUST START ANYWAY AFTER A REBOOT
+  lightLogic();
+
 
 }
 
@@ -315,6 +338,7 @@ void mqttHomeAssistantDiscovery()
 {
     String discoveryTopic;
     String stateTopic;
+    String commandTopic;
     String name;
     String topic;
     
@@ -333,8 +357,8 @@ void mqttHomeAssistantDiscovery()
         ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
         // POT
         ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-        //discoveryTopic = "homeassistant/sensor/esp32iotsensor/" + DEVICE_NAME + "_temp" + "/config";
-        name = "_pot";
+
+        name = "_" + POT_NAME;
         topic = MQTT_TOPIC_HA_PREFIX + "sensor/" + MQTT_TOPIC_STATUS + name;
         discoveryTopic = topic + MQTT_TOPIC_DISCOVERY_SUFFIX;
         stateTopic = topic + MQTT_TOPIC_STATE_SUFFIX;
@@ -345,6 +369,41 @@ void mqttHomeAssistantDiscovery()
         payload["value_template"] = "{{ value_json.pot | is_defined }}";
         payload["device_class"] = "voltage";
         payload["unit_of_measurement"] = "mV";
+
+
+        device = payload.createNestedObject("device");
+
+        device["name"] = DEVICE_NAME;
+        device["model"] = DEVICE_MODEL;
+        device["sw_version"] = SOFTWARE_VERSION;
+        device["manufacturer"] = MANUFACTURER;
+        identifiers = device.createNestedArray("identifiers");
+        identifiers.add(UNIQUE_ID);
+
+        serializeJsonPretty(payload, Serial);
+        Serial.println(" ");
+        serializeJson(payload, strPayload);
+
+        mqttPubSub.publish(discoveryTopic.c_str(), strPayload.c_str());
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+        // LIGHT
+        ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+        
+        payload.clear();
+        device.clear();
+        identifiers.clear();
+        strPayload.clear();
+
+        name = "_" + LIGHT_NAME;
+        discoveryTopic = MQTT_LIGHT_TOPIC + MQTT_TOPIC_DISCOVERY_SUFFIX;
+        stateTopic = MQTT_LIGHT_TOPIC + MQTT_TOPIC_STATE_SUFFIX;
+        commandTopic = MQTT_LIGHT_TOPIC + "/command";
+        
+        payload["name"] = DEVICE_NAME + name;
+        payload["unique_id"] = UNIQUE_ID + name;
+        payload["state_topic"] = stateTopic;
+        payload["command_topic"] = commandTopic;
 
 
         device = payload.createNestedObject("device");
@@ -378,6 +437,14 @@ void commandExecutor(char command){
     case 'R':
       ESP.restart();
     break;
+    case 'L':
+      lightState = true;
+      lightLogic();
+    break;
+    case 'l':
+      lightState = false;
+      lightLogic();
+    break;
     case 'h':
     case 'H':
     Serial.println();
@@ -410,6 +477,7 @@ void mqttReceiverCallback(char* topic, byte* payload, unsigned int length)
     }
     Serial.println();
 
+    //SERRA OPTION FROM MQTT
     if(String(topic) == String(MQTT_TOPIC_OPTION)) 
     {
       deserializeJson(json, payload);
@@ -418,15 +486,39 @@ void mqttReceiverCallback(char* topic, byte* payload, unsigned int length)
       Serial.println(sendDataPeriod);
     }
 
-    Serial.println(MQTT_TOPIC_COMMAND);
+
+    //SERRA COMMAND FROM MQTT
     if(String(topic) == String(MQTT_TOPIC_COMMAND)){
       Serial.println((char)payload[0]);
       commandExecutor((char)payload[0]);
     }
 
+    if(String(topic) == String(MQTT_LIGHT_TOPIC_COMMAND)) 
+    {
+        if(message == "ON")
+          lightState = true;
+        else
+          lightState = false;
+        lightLogic();
+    }
+
+    //HOME ASSISTANT STATUS
     if(String(topic) == String(MQTT_TOPIC_HA_STATUS)) 
     {
         if(message == "online")
             mqttHomeAssistantDiscovery();
     }
+
+}
+
+void lightLogic(){
+  const String lightTopic = MQTT_LIGHT_TOPIC + MQTT_TOPIC_STATE_SUFFIX;
+  if(lightState){
+    digitalWrite(LIGHT, HIGH);
+    mqttPubSub.publish(lightTopic.c_str(), "ON");
+  }
+  else{
+    digitalWrite(LIGHT, LOW);
+    mqttPubSub.publish(lightTopic.c_str(), "OFF");
+  }
 }
