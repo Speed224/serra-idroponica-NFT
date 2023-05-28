@@ -34,7 +34,7 @@
 #define LIGHT 32
 
 const String              POT_NAME = "pot";
-const String              LIGHT_NAME = "light";
+const String              LIGHT_NAME = "_light";
 
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
 /*------------------------------------Configuration----------------------------------------------------------------------------------------------*/
@@ -65,8 +65,9 @@ const String        MQTT_TOPIC_HA_STATUS = MQTT_TOPIC_HA_PREFIX + "status";
 
 //OBJECT COMMAND TOPIC
 
-const String        MQTT_LIGHT_TOPIC =  MQTT_TOPIC_HA_PREFIX + "light/" + MQTT_TOPIC_STATUS + "_" + LIGHT_NAME;
-const String        MQTT_LIGHT_TOPIC_COMMAND =  MQTT_TOPIC_HA_PREFIX + "light/" + MQTT_TOPIC_STATUS + "_" + LIGHT_NAME + MQTT_TOPIC_COMMAND_SUFFIX; 
+const String        MQTT_LIGHT_TOPIC =  MQTT_TOPIC_HA_PREFIX + "light/" + MQTT_TOPIC_STATUS + LIGHT_NAME;
+const String        MQTT_LIGHT_TOPIC_STATE =  MQTT_LIGHT_TOPIC + MQTT_TOPIC_STATE_SUFFIX; 
+const String        MQTT_LIGHT_TOPIC_COMMAND =  MQTT_LIGHT_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX; 
 
 const int           topicsNumber = 4;
 const String        topics[topicsNumber] = {MQTT_TOPIC_HA_STATUS, MQTT_TOPIC_OPTION, MQTT_TOPIC_COMMAND, MQTT_LIGHT_TOPIC_COMMAND};
@@ -89,12 +90,16 @@ unsigned int        sendDataPeriod = PERIOD_SECOND_5;
 
 unsigned long       dataPreviousMillis = 0;
 unsigned long       wifiPreviousMillis = 0;
+unsigned long       lightPreviousMillis = 0;
 unsigned long       currentMillis;
+
+unsigned int        lightONPeriod = PERIOD_HOUR_1*12;
+unsigned int        lightOFFPeriod = PERIOD_HOUR_1*12;
 
 char                command;
 
 
-
+bool                isDayTime = true;
 bool                lightState = true;
 
 
@@ -188,26 +193,6 @@ void loop()
     if(!mqttPubSub.connected())
       mqttConnect();
     else{
-     
-     /*
-      StaticJsonDocument<200> payload;  
-      //payload["temp"] = Temperature;
-      //payload["hum"] = Humidity;
-      //payload["inputstatus"] = strDoorStatus;
-      payload["pot"] = analogRead(POT);
-
-      String strPayload;
-      serializeJson(payload, strPayload);
-
-      String name = "_pot";
-      String potStateTopic = MQTT_TOPIC_HA_PREFIX + "sensor/" + MQTT_TOPIC_STATUS + name + MQTT_TOPIC_STATE_SUFFIX;
-      bool err = mqttPubSub.publish(potStateTopic.c_str(), strPayload.c_str());
-
-      if(!err)
-        Serial.println("MQTT: ERROR cannot send data");
-      else
-        Serial.println("MQTT: Data SENT");
-      */
 
       bool error = mqttSendData("pot", (String)analogRead(POT));
       if(!error)
@@ -220,6 +205,26 @@ void loop()
     }
   }
 
+
+  if(isDayTime){
+    if(currentMillis - lightPreviousMillis >= lightONPeriod) {
+      lightState = true;
+      lightLogic();
+
+      lightPreviousMillis = currentMillis;
+      isDayTime = false;
+    }
+  }else{
+    if(currentMillis - lightPreviousMillis >= lightOFFPeriod) {
+      lightState = false;
+      lightLogic();
+
+      lightPreviousMillis = currentMillis;
+      isDayTime = true;
+    }
+  }
+
+  
   
   
   if (currentMillis - wifiPreviousMillis >= PERIOD_MINUTE_15) {
@@ -264,19 +269,19 @@ void wifiSetup()
    
     while(WiFi.status() != WL_CONNECTED && counter++ < 8) 
     {
-        delay(1000);
-        Serial.print(".");
+      delay(1000);
+      Serial.print(".");
     }
     Serial.println("");
 
     if(WiFi.status() == WL_CONNECTED)
     {
-        Serial.println("WiFi connected");
-        Serial.print("IP address: ");
-        Serial.println(WiFi.localIP());
+      Serial.println("WiFi connected");
+      Serial.print("IP address: ");
+      Serial.println(WiFi.localIP());
     } else
     {
-        Serial.println("WiFi NOT connected!!!");
+      Serial.println("WiFi NOT connected!!!");
     }
 }
 
@@ -336,92 +341,90 @@ bool mqttSendData(String sensorName, String data){
 
 void mqttHomeAssistantDiscovery()
 {
-    String discoveryTopic;
-    String stateTopic;
-    String commandTopic;
-    String name;
-    String topic;
+  String discoveryTopic;
+  String stateTopic;
+  String commandTopic;
+  String name;
+  String topic;
+  
+  String payload;
+  String strPayload;
+
+  
+
+  if(mqttPubSub.connected())
+  {
+    Serial.println("SEND HOME ASSISTANT DISCOVERY!!!");
+    StaticJsonDocument<600> payload;
+    JsonObject device;
+    JsonArray identifiers;
+
+    ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    // POT
+    ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+    name = "_" + POT_NAME;
+    topic = MQTT_TOPIC_HA_PREFIX + "sensor/" + MQTT_TOPIC_STATUS + name;
+    discoveryTopic = topic + MQTT_TOPIC_DISCOVERY_SUFFIX;
+    stateTopic = topic + MQTT_TOPIC_STATE_SUFFIX;
     
-    String payload;
-    String strPayload;
+    payload["name"] = DEVICE_NAME + name;
+    payload["unique_id"] = UNIQUE_ID + name;
+    payload["state_topic"] = stateTopic;
+    payload["value_template"] = "{{ value_json.pot | is_defined }}";
+    payload["device_class"] = "voltage";
+    payload["unit_of_measurement"] = "mV";
+
+
+    device = payload.createNestedObject("device");
+
+    device["name"] = DEVICE_NAME;
+    device["model"] = DEVICE_MODEL;
+    device["sw_version"] = SOFTWARE_VERSION;
+    device["manufacturer"] = MANUFACTURER;
+    identifiers = device.createNestedArray("identifiers");
+    identifiers.add(UNIQUE_ID);
+
+    serializeJsonPretty(payload, Serial);
+    Serial.println(" ");
+    serializeJson(payload, strPayload);
+
+    mqttPubSub.publish(discoveryTopic.c_str(), strPayload.c_str());
+
+    ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    // LIGHT
+    ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    
+    payload.clear();
+    device.clear();
+    identifiers.clear();
+    strPayload.clear();
+
+    discoveryTopic = MQTT_LIGHT_TOPIC + MQTT_TOPIC_DISCOVERY_SUFFIX;
 
     
-
-    if(mqttPubSub.connected())
-    {
-        Serial.println("SEND HOME ASSISTANT DISCOVERY!!!");
-        StaticJsonDocument<600> payload;
-        JsonObject device;
-        JsonArray identifiers;
-
-        ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-        // POT
-        ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-        name = "_" + POT_NAME;
-        topic = MQTT_TOPIC_HA_PREFIX + "sensor/" + MQTT_TOPIC_STATUS + name;
-        discoveryTopic = topic + MQTT_TOPIC_DISCOVERY_SUFFIX;
-        stateTopic = topic + MQTT_TOPIC_STATE_SUFFIX;
-        
-        payload["name"] = DEVICE_NAME + name;
-        payload["unique_id"] = UNIQUE_ID + name;
-        payload["state_topic"] = stateTopic;
-        payload["value_template"] = "{{ value_json.pot | is_defined }}";
-        payload["device_class"] = "voltage";
-        payload["unit_of_measurement"] = "mV";
+    payload["name"] = DEVICE_NAME + LIGHT_NAME;
+    payload["unique_id"] = UNIQUE_ID + LIGHT_NAME;
+    payload["state_topic"] = MQTT_LIGHT_TOPIC_STATE;
+    payload["command_topic"] = MQTT_LIGHT_TOPIC_COMMAND;
 
 
-        device = payload.createNestedObject("device");
+    device = payload.createNestedObject("device");
 
-        device["name"] = DEVICE_NAME;
-        device["model"] = DEVICE_MODEL;
-        device["sw_version"] = SOFTWARE_VERSION;
-        device["manufacturer"] = MANUFACTURER;
-        identifiers = device.createNestedArray("identifiers");
-        identifiers.add(UNIQUE_ID);
+    device["name"] = DEVICE_NAME;
+    device["model"] = DEVICE_MODEL;
+    device["sw_version"] = SOFTWARE_VERSION;
+    device["manufacturer"] = MANUFACTURER;
+    identifiers = device.createNestedArray("identifiers");
+    identifiers.add(UNIQUE_ID);
 
-        serializeJsonPretty(payload, Serial);
-        Serial.println(" ");
-        serializeJson(payload, strPayload);
+    serializeJsonPretty(payload, Serial);
+    Serial.println(" ");
+    serializeJson(payload, strPayload);
 
-        mqttPubSub.publish(discoveryTopic.c_str(), strPayload.c_str());
+    mqttPubSub.publish(discoveryTopic.c_str(), strPayload.c_str());
 
-        ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-        // LIGHT
-        ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-        
-        payload.clear();
-        device.clear();
-        identifiers.clear();
-        strPayload.clear();
-
-        name = "_" + LIGHT_NAME;
-        discoveryTopic = MQTT_LIGHT_TOPIC + MQTT_TOPIC_DISCOVERY_SUFFIX;
-        stateTopic = MQTT_LIGHT_TOPIC + MQTT_TOPIC_STATE_SUFFIX;
-        commandTopic = MQTT_LIGHT_TOPIC + "/command";
-        
-        payload["name"] = DEVICE_NAME + name;
-        payload["unique_id"] = UNIQUE_ID + name;
-        payload["state_topic"] = stateTopic;
-        payload["command_topic"] = commandTopic;
-
-
-        device = payload.createNestedObject("device");
-
-        device["name"] = DEVICE_NAME;
-        device["model"] = DEVICE_MODEL;
-        device["sw_version"] = SOFTWARE_VERSION;
-        device["manufacturer"] = MANUFACTURER;
-        identifiers = device.createNestedArray("identifiers");
-        identifiers.add(UNIQUE_ID);
-
-        serializeJsonPretty(payload, Serial);
-        Serial.println(" ");
-        serializeJson(payload, strPayload);
-
-        mqttPubSub.publish(discoveryTopic.c_str(), strPayload.c_str());
-
-    }
+  }
 }
 
 void commandExecutor(char command){
@@ -495,30 +498,38 @@ void mqttReceiverCallback(char* topic, byte* payload, unsigned int length)
 
     if(String(topic) == String(MQTT_LIGHT_TOPIC_COMMAND)) 
     {
-        if(message == "ON")
-          lightState = true;
-        else
-          lightState = false;
-        lightLogic();
+      if(message == "ON")
+        lightState = true;
+      else
+        lightState = false;
+      lightLogic();
     }
 
     //HOME ASSISTANT STATUS
     if(String(topic) == String(MQTT_TOPIC_HA_STATUS)) 
     {
-        if(message == "online")
-            mqttHomeAssistantDiscovery();
+      if(message == "online")
+          mqttHomeAssistantDiscovery();
     }
 
 }
 
 void lightLogic(){
-  const String lightTopic = MQTT_LIGHT_TOPIC + MQTT_TOPIC_STATE_SUFFIX;
   if(lightState){
     digitalWrite(LIGHT, HIGH);
-    mqttPubSub.publish(lightTopic.c_str(), "ON");
+    mqttPubSub.publish(MQTT_LIGHT_TOPIC_STATE.c_str(), "ON");
   }
   else{
     digitalWrite(LIGHT, LOW);
-    mqttPubSub.publish(lightTopic.c_str(), "OFF");
+    mqttPubSub.publish(MQTT_LIGHT_TOPIC_STATE.c_str(), "OFF");
   }
+}
+
+void mqttStates(){
+  char* message;
+  if(lightState)
+    message = "ON";
+  else
+    message = "OFF";
+  mqttPubSub.publish(MQTT_LIGHT_TOPIC_STATE.c_str(), message);
 }
