@@ -54,10 +54,11 @@ const String        MQTT_TOPIC_HA_PREFIX = "homeassistant/";
 const String        MQTT_TOPIC_DISCOVERY_SUFFIX = "/config";
 
 const String        MQTT_TOPIC_OPTION = MQTT_TOPIC_HA_PREFIX + MQTT_TOPIC_STATUS + "/option";
+const String        MQTT_TOPIC_COMMAND = MQTT_TOPIC_HA_PREFIX + MQTT_TOPIC_STATUS + "/command";
 const String        MQTT_TOPIC_HA_STATUS = MQTT_TOPIC_HA_PREFIX + "status";
 
-const int           topicsNumber = 2;
-const String        topics[topicsNumber] = {MQTT_TOPIC_HA_STATUS, MQTT_TOPIC_OPTION};
+const int           topicsNumber = 3;
+const String        topics[topicsNumber] = {MQTT_TOPIC_HA_STATUS, MQTT_TOPIC_OPTION, MQTT_TOPIC_COMMAND};
 
 
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
@@ -80,6 +81,9 @@ unsigned long       wifiPreviousMillis = 0;
 unsigned long       currentMillis;
 
 char                command;
+
+
+String              POT_NAME = "pot";
 
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
 /*------------------------------------SETUP------------------------------------------------------------------------------------------------------*/
@@ -142,7 +146,6 @@ void setup()
   mqttPubSub.setBufferSize(600);
 
   mqttConnect();
-  mqttHomeAssistantDiscovery();
 
 }
 
@@ -155,7 +158,7 @@ void loop()
   mqttPubSub.loop(); //call often docs
 
 
-  if(currentMillis - dataPreviousMillis > sendDataPeriod)
+  if(currentMillis - dataPreviousMillis > sendDataPeriod || sendMqttData)
   {
     dataPreviousMillis = currentMillis;
 
@@ -163,6 +166,7 @@ void loop()
       mqttConnect();
     else{
      
+     /*
       StaticJsonDocument<200> payload;  
       //payload["temp"] = Temperature;
       //payload["hum"] = Humidity;
@@ -173,12 +177,21 @@ void loop()
       serializeJson(payload, strPayload);
 
       String name = "_pot";
-      String stateTopic = MQTT_TOPIC_HA_PREFIX + "sensor/" + MQTT_TOPIC_STATUS + name + MQTT_TOPIC_STATE_SUFFIX;
-      bool err = mqttPubSub.publish(stateTopic.c_str(), strPayload.c_str());
+      String potStateTopic = MQTT_TOPIC_HA_PREFIX + "sensor/" + MQTT_TOPIC_STATUS + name + MQTT_TOPIC_STATE_SUFFIX;
+      bool err = mqttPubSub.publish(potStateTopic.c_str(), strPayload.c_str());
+
       if(!err)
         Serial.println("MQTT: ERROR cannot send data");
       else
         Serial.println("MQTT: Data SENT");
+      */
+
+      bool error = mqttSendData("pot", (String)analogRead(POT));
+      if(!error)
+        Serial.println("MQTT: ERROR cannot send data");
+      else
+        Serial.println("MQTT: Sending Data");
+
       sendMqttData = false;
       
     }
@@ -197,20 +210,7 @@ void loop()
 
   if(Serial.available())
     command = Serial.read();
-
-  switch (command) {
-    case 'd':
-      Serial.print("mqtt conn: ");
-      Serial.println(mqttPubSub.connected());
-    break;
-    case 'w':
-      wifiSetup();
-      mqttConnect();
-    break;
-    case 'R':
-      ESP.restart();
-    break;
-  }
+  commandExecutor(command);  
 
 }
 
@@ -271,6 +271,7 @@ void mqttConnect()
         Serial.println("connected");
         //subscribe to topics
         mqttTopicsSubscribe(topics, topicsNumber);
+        mqttHomeAssistantDiscovery();
       } else 
       {
         Serial.print("failed, rc=");
@@ -283,15 +284,6 @@ void mqttConnect()
   }
 }
 
-/*
-String mqttTopicSubscribe(const char* topic){
-  bool success = mqttPubSub.subscribe(topic);
-  if(success)
-    return "Subscribed";
-  else
-    return "ERROR connection lost or message too large" ;
-}
-*/
 void mqttTopicsSubscribe(const String topics[topicsNumber], const int topicsNumber){
   for(int i = 0; i < topicsNumber; i++){
     String success = (mqttPubSub.subscribe(topics[i].c_str())) ? "Subscribed" : "ERROR cannot subscribe";
@@ -301,6 +293,20 @@ void mqttTopicsSubscribe(const String topics[topicsNumber], const int topicsNumb
     Serial.println();
   }
       
+}
+
+bool mqttSendData(String sensorName, String data){
+  StaticJsonDocument<200> payload;
+
+  payload[String(sensorName)] = data;
+
+  String strPayload;
+  serializeJson(payload, strPayload);
+
+
+  String potStateTopic = MQTT_TOPIC_HA_PREFIX + "sensor/" + MQTT_TOPIC_STATUS + '_' + sensorName + MQTT_TOPIC_STATE_SUFFIX;
+  return mqttPubSub.publish(potStateTopic.c_str(), strPayload.c_str());
+  
 }
 
 
@@ -359,6 +365,31 @@ void mqttHomeAssistantDiscovery()
     }
 }
 
+void commandExecutor(char command){
+  switch (command) {
+    case 'd':
+      sendMqttData = true;
+      Serial.println("Command: Sending Data");
+    break;
+    case 'w':
+      wifiSetup();
+      mqttConnect();
+    break;
+    case 'R':
+      ESP.restart();
+    break;
+    case 'h':
+    case 'H':
+    Serial.println();
+    Serial.println("Available Command:\n");
+    Serial.println("- h or H for help");
+    Serial.println();
+    break;
+  }
+
+}
+
+
 void mqttReceiverCallback(char* topic, byte* payload, unsigned int length) 
 {
 
@@ -385,6 +416,12 @@ void mqttReceiverCallback(char* topic, byte* payload, unsigned int length)
       sendDataPeriod = json["sendDataPeriod"];
       Serial.print("sendDataPeriod: ");
       Serial.println(sendDataPeriod);
+    }
+
+    Serial.println(MQTT_TOPIC_COMMAND);
+    if(String(topic) == String(MQTT_TOPIC_COMMAND)){
+      Serial.println((char)payload[0]);
+      commandExecutor((char)payload[0]);
     }
 
     if(String(topic) == String(MQTT_TOPIC_HA_STATUS)) 
