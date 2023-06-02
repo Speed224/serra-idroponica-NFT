@@ -5,6 +5,7 @@
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
 #include <Preferences.h>
+#include <AM2320_asukiaaa.h>
 
 
 
@@ -32,7 +33,10 @@
 
 const String              POT_NAME = "pot";
 const String              LIGHT_NAME = "_light";
-const String              WATER_PUMP_NAME = "_pump";
+const String              WATER_PUMP_NAME = "_waterpump";
+const String              TEMPERATURE_NAME = "_temperature";
+const String              HUMIDITY_NAME = "_humidity";
+
 
 
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
@@ -62,7 +66,7 @@ const String        MQTT_TOPIC_OPTION = MQTT_TOPIC_HA_PREFIX + MQTT_TOPIC_STATUS
 const String        MQTT_TOPIC_COMMAND = MQTT_TOPIC_HA_PREFIX + MQTT_TOPIC_STATUS + MQTT_TOPIC_COMMAND_SUFFIX;
 const String        MQTT_TOPIC_HA_STATUS = MQTT_TOPIC_HA_PREFIX + "status";
 
-//OBJECT COMMAND TOPIC
+//Sensor && Actuator Topics
 
 const String        MQTT_LIGHT_TOPIC =  MQTT_TOPIC_HA_PREFIX + "light/" + MQTT_TOPIC_STATUS + LIGHT_NAME;
 const String        MQTT_LIGHT_TOPIC_STATE =  MQTT_LIGHT_TOPIC + MQTT_TOPIC_STATE_SUFFIX; 
@@ -72,8 +76,20 @@ const String        MQTT_WATER_PUMP_TOPIC =  MQTT_TOPIC_HA_PREFIX + "switch/" + 
 const String        MQTT_WATER_PUMP_TOPIC_STATE =  MQTT_WATER_PUMP_TOPIC + MQTT_TOPIC_STATE_SUFFIX; 
 const String        MQTT_WATER_PUMP_TOPIC_COMMAND =  MQTT_WATER_PUMP_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX; 
 
+const String        MQTT_TEMPERATURE_TOPIC =  MQTT_TOPIC_HA_PREFIX + "sensor/" + MQTT_TOPIC_STATUS + TEMPERATURE_NAME;
+const String        MQTT_HUMIDITY_TOPIC =  MQTT_TOPIC_HA_PREFIX + "sensor/" + MQTT_TOPIC_STATUS + HUMIDITY_NAME;
+const String        MQTT_THERMOMETER_TOPIC_STATE =  MQTT_TOPIC_HA_PREFIX + "sensor/" + MQTT_TOPIC_STATUS + "_thermometer" + MQTT_TOPIC_STATE_SUFFIX; 
+
+
 const int           topicsNumber = 5;
-const String        topics[topicsNumber] = {MQTT_TOPIC_HA_STATUS, MQTT_TOPIC_OPTION, MQTT_TOPIC_COMMAND, MQTT_LIGHT_TOPIC_COMMAND, MQTT_WATER_PUMP_TOPIC_COMMAND};
+const String        topics[topicsNumber] = {
+                                            MQTT_TOPIC_HA_STATUS, 
+                                            MQTT_TOPIC_OPTION, 
+                                            MQTT_TOPIC_COMMAND, 
+                                            MQTT_LIGHT_TOPIC_COMMAND, 
+                                            MQTT_WATER_PUMP_TOPIC_COMMAND
+
+                                           };
 
 
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
@@ -82,7 +98,9 @@ const String        topics[topicsNumber] = {MQTT_TOPIC_HA_STATUS, MQTT_TOPIC_OPT
 WiFiClient          wifiClient;
 PubSubClient        mqttPubSub(wifiClient);
 Preferences         preferences;
+AM2320_asukiaaa     am2320;
 
+boolean             firstBoot = true;
 
 int                 count = 0;
 String              UNIQUE_ID;
@@ -126,6 +144,9 @@ void setup()
   pinMode(POT, INPUT);
   pinMode(LIGHT, OUTPUT);
   pinMode(WATER_PUMP, OUTPUT);
+
+  Wire.begin();
+  am2320.setWire(&Wire);
 
 
 
@@ -309,7 +330,10 @@ void mqttConnect()
         Serial.println("connected");
         //subscribe to topics
         mqttTopicsSubscribe(topics, topicsNumber);
-        mqttHomeAssistantDiscovery();
+        if (firstBoot){
+          mqttHomeAssistantDiscovery();
+          firstBoot = false;
+        }
       } else 
       {
         Serial.print("failed, rc=");
@@ -365,6 +389,10 @@ void mqttHomeAssistantDiscovery()
   if(mqttPubSub.connected())
   {
     Serial.println("SEND HOME ASSISTANT DISCOVERY!!!");
+
+    delay(500);
+
+
     StaticJsonDocument<600> payload;
     JsonObject device;
     JsonArray identifiers;
@@ -405,6 +433,8 @@ void mqttHomeAssistantDiscovery()
     // LIGHT
     ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     
+    delay(500);
+    
     payload.clear();
     device.clear();
     identifiers.clear();
@@ -438,6 +468,9 @@ void mqttHomeAssistantDiscovery()
     // WATER_PUMP
     ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     
+    delay(500);
+
+
     payload.clear();
     device.clear();
     identifiers.clear();
@@ -450,6 +483,45 @@ void mqttHomeAssistantDiscovery()
     payload["unique_id"] = UNIQUE_ID + WATER_PUMP_NAME;
     payload["state_topic"] = MQTT_WATER_PUMP_TOPIC_STATE;
     payload["command_topic"] = MQTT_WATER_PUMP_TOPIC_COMMAND;
+    payload["device_class"] = "switch";
+
+    device = payload.createNestedObject("device");
+
+    device["name"] = DEVICE_NAME;
+    device["model"] = DEVICE_MODEL;
+    device["sw_version"] = SOFTWARE_VERSION;
+    device["manufacturer"] = MANUFACTURER;
+    identifiers = device.createNestedArray("identifiers");
+    identifiers.add(UNIQUE_ID);
+
+    serializeJsonPretty(payload, Serial);
+    Serial.println(" ");
+    serializeJson(payload, strPayload);
+
+    mqttPubSub.publish(discoveryTopic.c_str(), strPayload.c_str());
+
+    ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    // TEMPERATURE
+    ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+    delay(500);
+
+
+    payload.clear();
+    device.clear();
+    identifiers.clear();
+    strPayload.clear();
+
+    discoveryTopic = MQTT_TEMPERATURE_TOPIC + MQTT_TOPIC_DISCOVERY_SUFFIX;
+    
+    payload["name"] = DEVICE_NAME + TEMPERATURE_NAME;
+    payload["unique_id"] = UNIQUE_ID + TEMPERATURE_NAME;
+    payload["state_topic"] = MQTT_THERMOMETER_TOPIC_STATE;
+
+    payload["value_template"] = "{{ value_json.temperature | is_defined}}";
+    payload["device_class"] = "temperature";
+    payload["unit_of_measurement"] = "°C";
+    payload["suggested_display_precision"] = 1;
 
 
     device = payload.createNestedObject("device");
@@ -467,7 +539,42 @@ void mqttHomeAssistantDiscovery()
 
     mqttPubSub.publish(discoveryTopic.c_str(), strPayload.c_str());
 
+    ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    // HUMIDITY
+    ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+    delay(500);
+
+    payload.clear();
+    device.clear();
+    identifiers.clear();
+    strPayload.clear();
+
+    discoveryTopic = MQTT_HUMIDITY_TOPIC + MQTT_TOPIC_DISCOVERY_SUFFIX;
+    
+    payload["name"] = DEVICE_NAME + HUMIDITY_NAME;
+    payload["unique_id"] = UNIQUE_ID + HUMIDITY_NAME;
+    payload["state_topic"] = MQTT_THERMOMETER_TOPIC_STATE;
+
+    payload["value_template"] = "{{ value_json.humidity | is_defined }}";
+    payload["device_class"] = "humidity";
+    payload["unit_of_measurement"] = "%";
+
+
+    device = payload.createNestedObject("device");
+
+    device["name"] = DEVICE_NAME;
+    device["model"] = DEVICE_MODEL;
+    device["sw_version"] = SOFTWARE_VERSION;
+    device["manufacturer"] = MANUFACTURER;
+    identifiers = device.createNestedArray("identifiers");
+    identifiers.add(UNIQUE_ID);
+
+    serializeJsonPretty(payload, Serial);
+    Serial.println(" ");
+    serializeJson(payload, strPayload);
+
+    mqttPubSub.publish(discoveryTopic.c_str(), strPayload.c_str());
 
   }
 }
@@ -530,6 +637,8 @@ void mqttReceiverCallback(char* topic, byte* payload, unsigned int length)
     {
       deserializeJson(json, payload);
       sendDataPeriod = json["sendDataPeriod"];
+      if(sendDataPeriod < 3000)
+        sendDataPeriod = 3000;
       Serial.print("sendDataPeriod: ");
       Serial.println(sendDataPeriod);
     }
@@ -602,4 +711,22 @@ void mqttStates(){
   else
     message = "OFF";
   mqttPubSub.publish(MQTT_WATER_PUMP_TOPIC_STATE.c_str(), message);
+
+  if (am2320.update() != 0) {
+    Serial.println("Error: Cannot update sensor values.");
+  }else{
+        //cannot resuse message string (to check)
+    StaticJsonDocument<200> payload;
+    String strPayload;
+    
+    payload["temperature"] = am2320.temperatureC;
+    payload["humidity"] = am2320.humidity;
+
+    
+    serializeJson(payload, strPayload);
+    mqttPubSub.publish(MQTT_THERMOMETER_TOPIC_STATE.c_str(), strPayload.c_str());
+    
+
+    
+  }
 }
