@@ -1,7 +1,7 @@
 #NEED HACS INTEGRATION
 
 type: custom:button-card
-entity: switch.serra_pump
+entity: switch.serra_waterpump
 icon: mdi:water-pump
 color: auto
 color_type: card
