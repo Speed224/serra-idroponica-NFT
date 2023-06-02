@@ -12,15 +12,11 @@
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
 /*------------------------------------Local definitions------------------------------------------------------------------------------------------*/
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
-#define PERIOD_MILLSEC_250      250
-#define PERIOD_MILLSEC_500      500
 #define PERIOD_SECOND_1         1000
 #define PERIOD_SECOND_5         5000
-#define PERIOD_SECOND_10        10000
 #define PERIOD_SECOND_15        15000
 #define PERIOD_MINUTE_1         60000
 #define PERIOD_MINUTE_5         300000
-#define PERIOD_MINUTE_10        600000
 #define PERIOD_MINUTE_15        900000
 #define PERIOD_HOUR_1           3600000
 
@@ -30,11 +26,14 @@
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
 /*------------------------------------I/O Definitions--------------------------------------------------------------------------------------------*/
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
-#define POT 35
+#define POT   35
 #define LIGHT 32
+#define WATER_PUMP  33 
 
 const String              POT_NAME = "pot";
 const String              LIGHT_NAME = "_light";
+const String              WATER_PUMP_NAME = "_pump";
+
 
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
 /*------------------------------------Configuration----------------------------------------------------------------------------------------------*/
@@ -67,10 +66,14 @@ const String        MQTT_TOPIC_HA_STATUS = MQTT_TOPIC_HA_PREFIX + "status";
 
 const String        MQTT_LIGHT_TOPIC =  MQTT_TOPIC_HA_PREFIX + "light/" + MQTT_TOPIC_STATUS + LIGHT_NAME;
 const String        MQTT_LIGHT_TOPIC_STATE =  MQTT_LIGHT_TOPIC + MQTT_TOPIC_STATE_SUFFIX; 
-const String        MQTT_LIGHT_TOPIC_COMMAND =  MQTT_LIGHT_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX; 
+const String        MQTT_LIGHT_TOPIC_COMMAND =  MQTT_LIGHT_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX;
 
-const int           topicsNumber = 4;
-const String        topics[topicsNumber] = {MQTT_TOPIC_HA_STATUS, MQTT_TOPIC_OPTION, MQTT_TOPIC_COMMAND, MQTT_LIGHT_TOPIC_COMMAND};
+const String        MQTT_WATER_PUMP_TOPIC =  MQTT_TOPIC_HA_PREFIX + "switch/" + MQTT_TOPIC_STATUS + WATER_PUMP_NAME;
+const String        MQTT_WATER_PUMP_TOPIC_STATE =  MQTT_WATER_PUMP_TOPIC + MQTT_TOPIC_STATE_SUFFIX; 
+const String        MQTT_WATER_PUMP_TOPIC_COMMAND =  MQTT_WATER_PUMP_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX; 
+
+const int           topicsNumber = 5;
+const String        topics[topicsNumber] = {MQTT_TOPIC_HA_STATUS, MQTT_TOPIC_OPTION, MQTT_TOPIC_COMMAND, MQTT_LIGHT_TOPIC_COMMAND, MQTT_WATER_PUMP_TOPIC_COMMAND};
 
 
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
@@ -101,6 +104,8 @@ char                command;
 
 bool                isDayTime = true;
 bool                lightState = true;
+bool                pumpState = true;
+
 
 
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
@@ -120,6 +125,8 @@ void setup()
   //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
   pinMode(POT, INPUT);
   pinMode(LIGHT, OUTPUT);
+  pinMode(WATER_PUMP, OUTPUT);
+
 
 
 
@@ -173,6 +180,7 @@ void setup()
 
   //ALL THE LOGIC THAT MUST START ANYWAY AFTER A REBOOT
   lightLogic();
+  pumpLogic();
 
 
 }
@@ -193,6 +201,8 @@ void loop()
     if(!mqttPubSub.connected())
       mqttConnect();
     else{
+
+      mqttStates();
 
       bool error = mqttSendData("pot", (String)analogRead(POT));
       if(!error)
@@ -227,7 +237,7 @@ void loop()
   
   
   
-  if (currentMillis - wifiPreviousMillis >= PERIOD_MINUTE_15) {
+  if (currentMillis - wifiPreviousMillis >= PERIOD_MINUTE_1) {
     if(WiFi.status() != WL_CONNECTED)
       wifiSetup();
 
@@ -424,6 +434,41 @@ void mqttHomeAssistantDiscovery()
 
     mqttPubSub.publish(discoveryTopic.c_str(), strPayload.c_str());
 
+    ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    // WATER_PUMP
+    ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    
+    payload.clear();
+    device.clear();
+    identifiers.clear();
+    strPayload.clear();
+
+    discoveryTopic = MQTT_WATER_PUMP_TOPIC + MQTT_TOPIC_DISCOVERY_SUFFIX;
+
+    
+    payload["name"] = DEVICE_NAME + WATER_PUMP_NAME;
+    payload["unique_id"] = UNIQUE_ID + WATER_PUMP_NAME;
+    payload["state_topic"] = MQTT_WATER_PUMP_TOPIC_STATE;
+    payload["command_topic"] = MQTT_WATER_PUMP_TOPIC_COMMAND;
+
+
+    device = payload.createNestedObject("device");
+
+    device["name"] = DEVICE_NAME;
+    device["model"] = DEVICE_MODEL;
+    device["sw_version"] = SOFTWARE_VERSION;
+    device["manufacturer"] = MANUFACTURER;
+    identifiers = device.createNestedArray("identifiers");
+    identifiers.add(UNIQUE_ID);
+
+    serializeJsonPretty(payload, Serial);
+    Serial.println(" ");
+    serializeJson(payload, strPayload);
+
+    mqttPubSub.publish(discoveryTopic.c_str(), strPayload.c_str());
+
+
+
   }
 }
 
@@ -505,6 +550,15 @@ void mqttReceiverCallback(char* topic, byte* payload, unsigned int length)
       lightLogic();
     }
 
+    if(String(topic) == String(MQTT_WATER_PUMP_TOPIC_COMMAND)) 
+    {
+      if(message == "ON")
+        pumpState = true;
+      else
+        pumpState = false;
+      pumpLogic();
+    }
+
     //HOME ASSISTANT STATUS
     if(String(topic) == String(MQTT_TOPIC_HA_STATUS)) 
     {
@@ -525,6 +579,17 @@ void lightLogic(){
   }
 }
 
+void pumpLogic(){
+  if(pumpState){
+    digitalWrite(WATER_PUMP, HIGH);
+    mqttPubSub.publish(MQTT_WATER_PUMP_TOPIC_STATE.c_str(), "ON");
+  }
+  else{
+    digitalWrite(WATER_PUMP, LOW);
+    mqttPubSub.publish(MQTT_WATER_PUMP_TOPIC_STATE.c_str(), "OFF");
+  }
+}
+
 void mqttStates(){
   char* message;
   if(lightState)
@@ -532,4 +597,9 @@ void mqttStates(){
   else
     message = "OFF";
   mqttPubSub.publish(MQTT_LIGHT_TOPIC_STATE.c_str(), message);
+  if(pumpState)
+    message = "ON";
+  else
+    message = "OFF";
+  mqttPubSub.publish(MQTT_WATER_PUMP_TOPIC_STATE.c_str(), message);
 }
