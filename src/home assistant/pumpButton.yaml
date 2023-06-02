@@ -1,0 +1,25 @@
+#NEED HACS INTEGRATION
+
+type: custom:button-card
+entity: switch.serra_pump
+icon: mdi:water-pump
+color: auto
+color_type: card
+tap_action:
+  action: toggle
+name: Pump
+state:
+  - value: 'on'
+    color: blue
+    icon: mdi:water-pump
+    styles:
+      card:
+        - color: rgb(74,113,226)
+        - background-color: white
+  - value: 'off'
+    color: black
+    icon: mdi:water-pump-off
+    styles:
+      card:
+        - color: grey
+        - background-color: white
