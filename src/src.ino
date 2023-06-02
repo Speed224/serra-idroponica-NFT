@@ -27,17 +27,33 @@
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
 /*------------------------------------I/O Definitions--------------------------------------------------------------------------------------------*/
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
-#define POT   35
-#define LIGHT 32
-#define WATER_PUMP  33 
+const byte                POT = 35;
+const byte                LIGHT = 32;
+const byte                WATER_PUMP = 33;
+const byte                TDS = 34;
 
 const String              POT_NAME = "pot";
 const String              LIGHT_NAME = "_light";
 const String              WATER_PUMP_NAME = "_waterpump";
 const String              TEMPERATURE_NAME = "_temperature";
 const String              HUMIDITY_NAME = "_humidity";
+const String              TDS_NAME = "_tds";
+const String              PH_NAME = "_ph";
 
 
+/*
+* TDS && PH 
+*/
+const byte SCOUNT = 30;            // sum of sample point
+const float VREF = 3.3;         //Volt
+
+int analogBuffer[SCOUNT];     // store the analog value in the array, read from ADC
+int analogBufferTemp[SCOUNT];
+int analogBufferIndex = 0;
+int copyIndex = 0;
+
+float averageVoltage = 0;
+float waterTemperature = 20;  
 
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
 /*------------------------------------Configuration----------------------------------------------------------------------------------------------*/
@@ -78,7 +94,11 @@ const String        MQTT_WATER_PUMP_TOPIC_COMMAND =  MQTT_WATER_PUMP_TOPIC + MQT
 
 const String        MQTT_TEMPERATURE_TOPIC =  MQTT_TOPIC_HA_PREFIX + "sensor/" + MQTT_TOPIC_STATUS + TEMPERATURE_NAME;
 const String        MQTT_HUMIDITY_TOPIC =  MQTT_TOPIC_HA_PREFIX + "sensor/" + MQTT_TOPIC_STATUS + HUMIDITY_NAME;
-const String        MQTT_THERMOMETER_TOPIC_STATE =  MQTT_TOPIC_HA_PREFIX + "sensor/" + MQTT_TOPIC_STATUS + "_thermometer" + MQTT_TOPIC_STATE_SUFFIX; 
+const String        MQTT_THERMOMETER_TOPIC_STATE =  MQTT_TOPIC_HA_PREFIX + "sensor/" + MQTT_TOPIC_STATUS + "_thermometer" + MQTT_TOPIC_STATE_SUFFIX;
+
+const String        MQTT_TDS_TOPIC =  MQTT_TOPIC_HA_PREFIX + "sensor/" + MQTT_TOPIC_STATUS + TDS_NAME;
+//const String        MQTT_PH_TOPIC =  MQTT_TOPIC_HA_PREFIX + "sensor/" + MQTT_TOPIC_STATUS + PH_NAME;
+const String        MQTT_WATER_QUALITY_TOPIC_STATE =  MQTT_TOPIC_HA_PREFIX + "sensor/" + MQTT_TOPIC_STATUS + "_water_quality" + MQTT_TOPIC_STATE_SUFFIX;
 
 
 const int           topicsNumber = 5;
@@ -102,7 +122,7 @@ AM2320_asukiaaa     am2320;
 
 boolean             firstBoot = true;
 
-int                 count = 0;
+short               numberOfSamples = 5;
 String              UNIQUE_ID;
 bool                sendMqttData = false;
 
@@ -112,13 +132,13 @@ unsigned int        sendDataPeriod = PERIOD_SECOND_5;
 unsigned long       dataPreviousMillis = 0;
 unsigned long       wifiPreviousMillis = 0;
 unsigned long       lightPreviousMillis = 0;
+unsigned long       tdsSampleMillis = 0;
 unsigned long       currentMillis;
 
 unsigned int        lightONPeriod = PERIOD_HOUR_1*12;
 unsigned int        lightOFFPeriod = PERIOD_HOUR_1*12;
 
 char                command;
-
 
 bool                isDayTime = true;
 bool                lightState = true;
@@ -131,9 +151,6 @@ bool                pumpState = true;
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
 void setup() 
 {
-
-
-
   Serial.begin(115200);
   Serial.println("Inizio setup");
 
@@ -144,6 +161,7 @@ void setup()
   pinMode(POT, INPUT);
   pinMode(LIGHT, OUTPUT);
   pinMode(WATER_PUMP, OUTPUT);
+  pinMode(TDS, INPUT);
 
   Wire.begin();
   am2320.setWire(&Wire);
@@ -213,6 +231,19 @@ void loop()
 {
   currentMillis = millis();
   mqttPubSub.loop(); //call often docs
+
+
+  //tds sample for algorithm
+
+  if(currentMillis - tdsSampleMillis > sendDataPeriod/numberOfSamples){     //every 1/n of dataPeriod milliseconds,read the analog value from the ADC
+      analogBuffer[analogBufferIndex] = analogRead(TDS);    //read the analog value and store into the buffer
+      analogBufferIndex++;
+      if(analogBufferIndex == SCOUNT){ 
+        analogBufferIndex = 0;
+      }
+
+      tdsSampleMillis = currentMillis;
+    }   
 
 
   if(currentMillis - dataPreviousMillis > sendDataPeriod || sendMqttData)
@@ -559,7 +590,44 @@ void mqttHomeAssistantDiscovery()
     payload["value_template"] = "{{ value_json.humidity | is_defined }}";
     payload["device_class"] = "humidity";
     payload["unit_of_measurement"] = "%";
+    
 
+
+    device = payload.createNestedObject("device");
+
+    device["name"] = DEVICE_NAME;
+    device["model"] = DEVICE_MODEL;
+    device["sw_version"] = SOFTWARE_VERSION;
+    device["manufacturer"] = MANUFACTURER;
+    identifiers = device.createNestedArray("identifiers");
+    identifiers.add(UNIQUE_ID);
+
+    serializeJsonPretty(payload, Serial);
+    Serial.println(" ");
+    serializeJson(payload, strPayload);
+
+    mqttPubSub.publish(discoveryTopic.c_str(), strPayload.c_str());
+
+    ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    // TDS
+    ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+    delay(500);
+
+    payload.clear();
+    device.clear();
+    identifiers.clear();
+    strPayload.clear();
+
+    discoveryTopic = MQTT_TDS_TOPIC + MQTT_TOPIC_DISCOVERY_SUFFIX;
+    
+    payload["name"] = DEVICE_NAME + TDS_NAME;
+    payload["unique_id"] = UNIQUE_ID + TDS_NAME;
+    payload["state_topic"] = MQTT_WATER_QUALITY_TOPIC_STATE;
+
+    payload["value_template"] = "{{ value_json.tds | is_defined }}";
+    payload["unit_of_measurement"] = "ppm";
+    payload["suggested_display_precision"] = 1;
 
     device = payload.createNestedObject("device");
 
@@ -706,6 +774,7 @@ void mqttStates(){
   else
     message = "OFF";
   mqttPubSub.publish(MQTT_LIGHT_TOPIC_STATE.c_str(), message);
+
   if(pumpState)
     message = "ON";
   else
@@ -726,7 +795,60 @@ void mqttStates(){
     serializeJson(payload, strPayload);
     mqttPubSub.publish(MQTT_THERMOMETER_TOPIC_STATE.c_str(), strPayload.c_str());
     
-
-    
   }
+  float tdsValue;
+  //float phValue;
+
+  //TDS CALCS
+  for(copyIndex=0; copyIndex<SCOUNT; copyIndex++){
+    analogBufferTemp[copyIndex] = analogBuffer[copyIndex];
+    
+    // read the analog value more stable by the median filtering algorithm, and convert to voltage value
+    averageVoltage = tdsMedianFilteringAlgorithm(analogBufferTemp,SCOUNT) * (float)VREF / 4096.0;     //TO FIT WITH ESP32 (12 BIT analogRead resolution) == 4096
+    
+    //temperature compensation formula: fFinalResult(25^C) = fFinalResult(current)/(1.0+0.02*(fTP-25.0)); 
+    float compensationCoefficient = 1.0+0.02*(waterTemperature-25.0);
+    //temperature compensation
+    float compensationVoltage = averageVoltage / compensationCoefficient;
+    
+    //convert voltage value to tds value
+    tdsValue = (133.42 * compensationVoltage * compensationVoltage * compensationVoltage - 255.86 * compensationVoltage*  compensationVoltage + 857.39 * compensationVoltage) * 0.5;
+  }
+  StaticJsonDocument<200> payload;
+  String strPayload;
+  
+  payload["tds"] = tdsValue; //ppm
+  //payload["ec"] = (tdsValue * 2)/1000; //µS/cm
+
+  //payload["ph"] = phValue;
+
+  
+  serializeJson(payload, strPayload);
+  mqttPubSub.publish(MQTT_WATER_QUALITY_TOPIC_STATE.c_str(), strPayload.c_str());
+
+}
+
+
+// median filtering algorithm
+int tdsMedianFilteringAlgorithm(int bArray[], int iFilterLen){
+  int bTab[iFilterLen];
+  for (byte i = 0; i<iFilterLen; i++)
+  bTab[i] = bArray[i];
+  int i, j, bTemp;
+  for (j = 0; j < iFilterLen - 1; j++) {
+    for (i = 0; i < iFilterLen - j - 1; i++) {
+      if (bTab[i] > bTab[i + 1]) {
+        bTemp = bTab[i];
+        bTab[i] = bTab[i + 1];
+        bTab[i + 1] = bTemp;
+      }
+    }
+  }
+  if ((iFilterLen & 1) > 0){
+    bTemp = bTab[(iFilterLen - 1) / 2];
+  }
+  else {
+    bTemp = (bTab[iFilterLen / 2] + bTab[iFilterLen / 2 - 1]) / 2;
+  }
+  return bTemp;
 }
