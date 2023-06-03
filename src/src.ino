@@ -145,7 +145,7 @@ String              UNIQUE_ID;
 bool                sendMqttData = false;
 
 //DEFAULT wait time for sending data
-unsigned int        pollingDataPeriod = PERIOD_SECOND_1*3;
+unsigned int        pollingDataPeriod = PERIOD_SECOND_1*4;
 unsigned int        sendDataPeriod = PERIOD_SECOND_5;
 
 unsigned long       pollingPreviousMillis = 0;
@@ -825,15 +825,24 @@ void mqttReceiverCallback(char* topic, byte* payload, unsigned int length)
     //SERRA OPTION FROM MQTT
     if(String(topic) == String(MQTT_TOPIC_OPTION)) 
     {
-      //DATA PERIOD
+      
       deserializeJson(json, payload);
+
+      //DATA PERIOD
       sendDataPeriod = json["sendDataPeriod"];
       if(sendDataPeriod < 3000)
         sendDataPeriod = 3000;
       Serial.print("sendDataPeriod: ");
       Serial.println(sendDataPeriod);
 
-    //BYPASS SECURITY
+      //POLLING PERIOD
+      sendDataPeriod = json["pollingDataPeriod"];
+      if(pollingDataPeriod < 1000)
+        pollingDataPeriod = 1000;
+      Serial.print("pollingDataPeriod: ");
+      Serial.println(pollingDataPeriod);
+
+      //BYPASS SECURITY
       bypassPumpSecurity = json["bypassPumpSecurity"];
       
       if(bypassPumpSecurity)
@@ -1017,3 +1026,4 @@ void mqttStates(){
   serializeJson(payload, strPayload);
   mqttPubSub.publish(MQTT_WATER_QUALITY_TOPIC_STATE.c_str(), strPayload.c_str());
 }
+
