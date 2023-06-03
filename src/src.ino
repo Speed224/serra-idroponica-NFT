@@ -31,10 +31,13 @@ const byte                POT = 35;
 const byte                LIGHT = 32;
 const byte                WATER_PUMP = 33;
 const byte                TDS = 34;
+//const byte                PH = 35;
+const byte                AIR_PUMP = 19;
 
 const String              POT_NAME = "pot";
 const String              LIGHT_NAME = "_light";
 const String              WATER_PUMP_NAME = "_waterpump";
+const String              AIR_PUMP_NAME = "_airpump";
 const String              TEMPERATURE_NAME = "_temperature";
 const String              HUMIDITY_NAME = "_humidity";
 const String              TDS_NAME = "_tds";
@@ -88,26 +91,35 @@ const String        MQTT_LIGHT_TOPIC =  MQTT_TOPIC_HA_PREFIX + "light/" + MQTT_T
 const String        MQTT_LIGHT_TOPIC_STATE =  MQTT_LIGHT_TOPIC + MQTT_TOPIC_STATE_SUFFIX; 
 const String        MQTT_LIGHT_TOPIC_COMMAND =  MQTT_LIGHT_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX;
 
+// WATER PUMP
 const String        MQTT_WATER_PUMP_TOPIC =  MQTT_TOPIC_HA_PREFIX + "switch/" + MQTT_TOPIC_STATUS + WATER_PUMP_NAME;
 const String        MQTT_WATER_PUMP_TOPIC_STATE =  MQTT_WATER_PUMP_TOPIC + MQTT_TOPIC_STATE_SUFFIX; 
 const String        MQTT_WATER_PUMP_TOPIC_COMMAND =  MQTT_WATER_PUMP_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX; 
 
+// AIR PUMP
+const String        MQTT_AIR_PUMP_TOPIC =  MQTT_TOPIC_HA_PREFIX + "switch/" + MQTT_TOPIC_STATUS + AIR_PUMP_NAME;
+const String        MQTT_AIR_PUMP_TOPIC_STATE =  MQTT_AIR_PUMP_TOPIC + MQTT_TOPIC_STATE_SUFFIX; 
+const String        MQTT_AIR_PUMP_TOPIC_COMMAND =  MQTT_AIR_PUMP_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX; 
+
+// THERMOMETER
 const String        MQTT_TEMPERATURE_TOPIC =  MQTT_TOPIC_HA_PREFIX + "sensor/" + MQTT_TOPIC_STATUS + TEMPERATURE_NAME;
 const String        MQTT_HUMIDITY_TOPIC =  MQTT_TOPIC_HA_PREFIX + "sensor/" + MQTT_TOPIC_STATUS + HUMIDITY_NAME;
 const String        MQTT_THERMOMETER_TOPIC_STATE =  MQTT_TOPIC_HA_PREFIX + "sensor/" + MQTT_TOPIC_STATUS + "_thermometer" + MQTT_TOPIC_STATE_SUFFIX;
 
+// WATER QUALITY
 const String        MQTT_TDS_TOPIC =  MQTT_TOPIC_HA_PREFIX + "sensor/" + MQTT_TOPIC_STATUS + TDS_NAME;
 //const String        MQTT_PH_TOPIC =  MQTT_TOPIC_HA_PREFIX + "sensor/" + MQTT_TOPIC_STATUS + PH_NAME;
 const String        MQTT_WATER_QUALITY_TOPIC_STATE =  MQTT_TOPIC_HA_PREFIX + "sensor/" + MQTT_TOPIC_STATUS + "_water_quality" + MQTT_TOPIC_STATE_SUFFIX;
 
 
-const int           topicsNumber = 5;
+const int           topicsNumber = 6;
 const String        topics[topicsNumber] = {
                                             MQTT_TOPIC_HA_STATUS, 
                                             MQTT_TOPIC_OPTION, 
                                             MQTT_TOPIC_COMMAND, 
                                             MQTT_LIGHT_TOPIC_COMMAND, 
-                                            MQTT_WATER_PUMP_TOPIC_COMMAND
+                                            MQTT_WATER_PUMP_TOPIC_COMMAND,
+                                            MQTT_AIR_PUMP_TOPIC_COMMAND
 
                                            };
 
@@ -142,7 +154,10 @@ char                command;
 
 bool                isDayTime = true;
 bool                lightState = true;
-bool                pumpState = true;
+bool                waterPumpState = true;
+bool                airPumpState = true;
+
+
 
 
 
@@ -161,6 +176,7 @@ void setup()
   pinMode(POT, INPUT);
   pinMode(LIGHT, OUTPUT);
   pinMode(WATER_PUMP, OUTPUT);
+  pinMode(AIR_PUMP, OUTPUT);
   pinMode(TDS, INPUT);
 
   Wire.begin();
@@ -219,7 +235,10 @@ void setup()
 
   //ALL THE LOGIC THAT MUST START ANYWAY AFTER A REBOOT
   lightLogic();
-  pumpLogic();
+  waterPumpLogic();
+  airPumpLogic();
+
+  
 
 
 }
@@ -230,7 +249,7 @@ void setup()
 void loop() 
 {
   currentMillis = millis();
-  mqttPubSub.loop(); //call often docs
+  mqttPubSub.loop(); //call often (docs)
 
 
   //tds sample for algorithm
@@ -532,6 +551,42 @@ void mqttHomeAssistantDiscovery()
     mqttPubSub.publish(discoveryTopic.c_str(), strPayload.c_str());
 
     ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    // AIR_PUMP
+    ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    
+    delay(500);
+
+
+    payload.clear();
+    device.clear();
+    identifiers.clear();
+    strPayload.clear();
+
+    discoveryTopic = MQTT_AIR_PUMP_TOPIC + MQTT_TOPIC_DISCOVERY_SUFFIX;
+
+    
+    payload["name"] = DEVICE_NAME + AIR_PUMP_NAME;
+    payload["unique_id"] = UNIQUE_ID + AIR_PUMP_NAME;
+    payload["state_topic"] = MQTT_AIR_PUMP_TOPIC_STATE;
+    payload["command_topic"] = MQTT_AIR_PUMP_TOPIC_COMMAND;
+    payload["device_class"] = "switch";
+
+    device = payload.createNestedObject("device");
+
+    device["name"] = DEVICE_NAME;
+    device["model"] = DEVICE_MODEL;
+    device["sw_version"] = SOFTWARE_VERSION;
+    device["manufacturer"] = MANUFACTURER;
+    identifiers = device.createNestedArray("identifiers");
+    identifiers.add(UNIQUE_ID);
+
+    serializeJsonPretty(payload, Serial);
+    Serial.println(" ");
+    serializeJson(payload, strPayload);
+
+    mqttPubSub.publish(discoveryTopic.c_str(), strPayload.c_str());
+
+    ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     // TEMPERATURE
     ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -730,10 +785,19 @@ void mqttReceiverCallback(char* topic, byte* payload, unsigned int length)
     if(String(topic) == String(MQTT_WATER_PUMP_TOPIC_COMMAND)) 
     {
       if(message == "ON")
-        pumpState = true;
+        waterPumpState = true;
       else
-        pumpState = false;
-      pumpLogic();
+        waterPumpState = false;
+      waterPumpLogic();
+    }
+
+    if(String(topic) == String(MQTT_AIR_PUMP_TOPIC_COMMAND)) 
+    {
+      if(message == "ON")
+        airPumpState = true;
+      else
+        airPumpState = false;
+      airPumpLogic();
     }
 
     //HOME ASSISTANT STATUS
@@ -756,14 +820,25 @@ void lightLogic(){
   }
 }
 
-void pumpLogic(){
-  if(pumpState){
+void waterPumpLogic(){
+  if(waterPumpState){
     digitalWrite(WATER_PUMP, HIGH);
     mqttPubSub.publish(MQTT_WATER_PUMP_TOPIC_STATE.c_str(), "ON");
   }
   else{
     digitalWrite(WATER_PUMP, LOW);
     mqttPubSub.publish(MQTT_WATER_PUMP_TOPIC_STATE.c_str(), "OFF");
+  }
+}
+
+void airPumpLogic(){
+  if(airPumpState){
+    digitalWrite(AIR_PUMP, HIGH);
+    mqttPubSub.publish(MQTT_AIR_PUMP_TOPIC_STATE.c_str(), "ON");
+  }
+  else{
+    digitalWrite(AIR_PUMP, LOW);
+    mqttPubSub.publish(MQTT_AIR_PUMP_TOPIC_STATE.c_str(), "OFF");
   }
 }
 
@@ -775,11 +850,17 @@ void mqttStates(){
     message = "OFF";
   mqttPubSub.publish(MQTT_LIGHT_TOPIC_STATE.c_str(), message);
 
-  if(pumpState)
+  if(waterPumpState)
     message = "ON";
   else
     message = "OFF";
   mqttPubSub.publish(MQTT_WATER_PUMP_TOPIC_STATE.c_str(), message);
+
+  if(airPumpState)
+    message = "ON";
+  else
+    message = "OFF";
+  mqttPubSub.publish(MQTT_AIR_PUMP_TOPIC_STATE.c_str(), message);
 
   if (am2320.update() != 0) {
     Serial.println("Error: Cannot update sensor values.");
