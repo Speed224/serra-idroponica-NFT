@@ -172,7 +172,15 @@ float               tds;
 //float             ph;
 
 
-
+// INTERRUPT FUNCTION
+void IRAM_ATTR floatSensorISR(){
+  if(!bypassPumpSecurity){
+    waterPumpState = false;
+    floatSensorState = false;
+    sendMqttData = true;
+  }
+  
+}
 
 
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
@@ -192,7 +200,9 @@ void setup()
   pinMode(WATER_PUMP, OUTPUT);
   pinMode(AIR_PUMP, OUTPUT);
   pinMode(TDS, INPUT);
+
   pinMode(FLOAT_SENSOR, INPUT_PULLUP);
+  attachInterrupt(FLOAT_SENSOR, floatSensorISR, FALLING);
 
   Wire.begin();
   am2320.setWire(&Wire);
@@ -256,9 +266,6 @@ void setup()
   am2320Logic();
   tdsLogic();
 
-  
-
-
 }
 
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
@@ -298,13 +305,6 @@ void loop()
   if(currentMillis - dataPreviousMillis > sendDataPeriod || sendMqttData)
   {
     dataPreviousMillis = currentMillis;
-
-    lightLogic(lightState);
-    floatSensorLogic();
-    waterPumpLogic(waterPumpState);
-    airPumpLogic(airPumpState);
-    am2320Logic();
-    tdsLogic();
 
     if(!mqttPubSub.connected())
       mqttConnect();
@@ -825,20 +825,24 @@ void mqttReceiverCallback(char* topic, byte* payload, unsigned int length)
     //SERRA OPTION FROM MQTT
     if(String(topic) == String(MQTT_TOPIC_OPTION)) 
     {
-      
+      int temp; //use temp because if the value is not in the json
+      //the temp var become 0 and not the real var
+
       deserializeJson(json, payload);
 
       //DATA PERIOD
-      sendDataPeriod = json["sendDataPeriod"];
-      if(sendDataPeriod < 3000)
-        sendDataPeriod = 3000;
+      temp = json["sendDataPeriod"];
+      if(temp < 5000)
+        temp = PERIOD_SECOND_5;
+        sendDataPeriod = temp;
       Serial.print("sendDataPeriod: ");
       Serial.println(sendDataPeriod);
 
       //POLLING PERIOD
-      sendDataPeriod = json["pollingDataPeriod"];
-      if(pollingDataPeriod < 1000)
-        pollingDataPeriod = 1000;
+      temp = json["pollingDataPeriod"];
+      if(temp < 3000)
+        temp = 3000;
+        pollingDataPeriod = temp;
       Serial.print("pollingDataPeriod: ");
       Serial.println(pollingDataPeriod);
 
@@ -909,7 +913,6 @@ void lightLogic(bool logicState){
   else{
     digitalWrite(LIGHT, LOW);
   }
-  //mqttStates();
 }
 
 void waterPumpLogic(bool logicState){
@@ -920,7 +923,7 @@ void waterPumpLogic(bool logicState){
   else{
     digitalWrite(WATER_PUMP, LOW);
   }
-  //mqttStates();
+
 }
 
 void airPumpLogic(bool logicState){
@@ -931,16 +934,18 @@ void airPumpLogic(bool logicState){
   else{
     digitalWrite(AIR_PUMP, LOW);
   }
- //mqttStates();
+
 }
 
 void floatSensorLogic(){
   floatSensorState = digitalRead(FLOAT_SENSOR);
-  
-  if(!floatSensorState || !bypassPumpSecurity)
-    waterPumpState = false;
-
-  //mqttStates();
+  //if the water level is fine and the bypass is not active the pump will be turned on automatically
+  if(!bypassPumpSecurity){
+    if(!floatSensorState)
+      waterPumpState = false;
+    else
+      waterPumpState = true;
+  }
 }
 
 void am2320Logic(){
@@ -950,7 +955,6 @@ void am2320Logic(){
     temperature = am2320.temperatureC;
     humidity = am2320.humidity;
   }
-  //mqttStates();
 }
 
 void tdsLogic(){
