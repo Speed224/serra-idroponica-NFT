@@ -1,0 +1,40 @@
+#put this in "Raw configuration editor". Overview --> 3 dots right corner --> Raw configuration editor
+button_card_templates:
+  switch:
+    variables:
+      color_on: dodgerblue
+      color_off: grey
+      name_color_on: color_on
+      name_color_off: color_off
+      background_color_on: white
+      background_color_off: white
+      icon_on: mdi:led-on
+      icon_off: mdi:led-off
+      name: name
+    size: 70%
+    name: '[[[ return variables.name ]]]'
+    styles:
+      card:
+        - font-size: 16px
+        - width: 120px
+        - height: 120px
+    tap_action:
+      action: toggle
+    state:
+      - value: 'on'
+        icon: '[[[ return variables.icon_on ]]]'
+        styles:
+          card:
+            - color: '[[[ return variables.color_on ]]]'
+              background-color: '[[[ return variables.background_color_on ]]]'
+          name:
+            - color: '[[[ return variables.name_color_on ]]]'
+      - value: 'off'
+        color: '[[[ return variables.color_off ]]]'
+        icon: '[[[ return variables.icon_off ]]]'
+        styles:
+          card:
+            - color: '[[[ return variables.color_off ]]]'
+              background-color: '[[[ return variables.background_color_off ]]]'
+          name:
+            - color: '[[[ return variables.name_color_off ]]]'
