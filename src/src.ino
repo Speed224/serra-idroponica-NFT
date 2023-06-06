@@ -890,7 +890,7 @@ void mqttReceiverCallback(char* topic, byte* payload, unsigned int length)
       if(temp < 3000)
         temp = 3000;
       if(temp == 0)
-        temp = pollingDataPeriod
+        temp = pollingDataPeriod;
       pollingDataPeriod = temp;
       Serial.print("pollingDataPeriod: ");
       Serial.println(pollingDataPeriod);
