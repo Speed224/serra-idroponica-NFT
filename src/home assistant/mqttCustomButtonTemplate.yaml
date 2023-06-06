@@ -1,0 +1,17 @@
+#this template use CustomButtonTemplate
+mqtt_switch:
+    template: switch
+    variables:
+      topic: null
+      payload_on: null
+      payload_off: null
+      qos: 0
+      retain: 0
+    tap_action:
+      action: call-service
+      service: mqtt.publish
+      service_data:
+        topic: '[[[ return variables.topic ]]]'
+        payload: >-
+          [[[ if (entity.state === "on") return variables.payload_on; if
+          (entity.state === "off")  return variables.payload_off; ]]]
