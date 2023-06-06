@@ -1,3 +1,5 @@
+//TODO CONTROLLARE LA ZONA COMANDI, BLOCCA TUTTO
+
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
 /*------------------------------------Include Files----------------------------------------------------------------------------------------------*/
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
@@ -116,7 +118,7 @@ const String        topics[topicsNumber] = {
                                             MQTT_TOPIC_HA_STATUS, 
                                             MQTT_TOPIC_OPTION, 
                                             MQTT_TOPIC_COMMAND, 
-                                            (MQTT_LIGHT_TOPIC + (MQTT_LIGHT_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX)), 
+                                            (MQTT_LIGHT_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX), 
                                             (MQTT_WATER_PUMP_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX),
                                             (MQTT_AIR_PUMP_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX)
 
@@ -523,7 +525,7 @@ void mqttHomeAssistantDiscovery()
     payload["name"] = DEVICE_NAME + LIGHT_NAME;
     payload["unique_id"] = UNIQUE_ID + LIGHT_NAME;
     payload["state_topic"] = (MQTT_LIGHT_TOPIC + MQTT_TOPIC_STATE_SUFFIX);
-    payload["command_topic"] = (MQTT_LIGHT_TOPIC + (MQTT_LIGHT_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX));
+    payload["command_topic"] = (MQTT_LIGHT_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX);
 
 
     device = payload.createNestedObject("device");
@@ -897,7 +899,7 @@ void mqttReceiverCallback(char* topic, byte* payload, unsigned int length)
       commandExecutor((char)payload[0]);
     }
 
-    if(String(topic) == String((MQTT_LIGHT_TOPIC + (MQTT_LIGHT_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX)))) 
+    if(String(topic) == String((MQTT_LIGHT_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX))) 
     {
       if(message == "ON")
         lightLogic(true);
