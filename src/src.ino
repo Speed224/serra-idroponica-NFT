@@ -44,6 +44,7 @@ const String              HUMIDITY_NAME = "_humidity";
 const String              TDS_NAME = "_tds";
 const String              PH_NAME = "_ph";
 const String              FLOAT_SENSOR_NAME = "_floatsensor";
+const String              SECURITY_SWITCH_NAME = "_securityswitch";
 
 
 /*
@@ -89,6 +90,8 @@ const String        MQTT_TOPIC_HA_STATUS = MQTT_TOPIC_HA_PREFIX + "status";
 
 //Sensor && Actuator Topics
 
+//todo sostituire command e state per liberare memoria
+
 const String        MQTT_LIGHT_TOPIC =  MQTT_TOPIC_HA_PREFIX + "light/" + MQTT_TOPIC_STATUS + LIGHT_NAME;
 const String        MQTT_LIGHT_TOPIC_STATE =  MQTT_LIGHT_TOPIC + MQTT_TOPIC_STATE_SUFFIX; 
 const String        MQTT_LIGHT_TOPIC_COMMAND =  MQTT_LIGHT_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX;
@@ -116,6 +119,10 @@ const String        MQTT_WATER_QUALITY_TOPIC_STATE =  MQTT_TOPIC_HA_PREFIX + "se
 //WATER LEVEL
 const String        MQTT_FLOAT_SENSOR_TOPIC =  MQTT_TOPIC_HA_PREFIX + "binary_sensor/" + MQTT_TOPIC_STATUS + FLOAT_SENSOR_NAME;
 const String        MQTT_FLOAT_SENSOR_TOPIC_STATE =  MQTT_FLOAT_SENSOR_TOPIC + MQTT_TOPIC_STATE_SUFFIX;
+
+//OPTIONS STATE
+const String        MQTT_SECURITY_SWITCH_TOPIC =  MQTT_TOPIC_HA_PREFIX + "switch/" + MQTT_TOPIC_STATUS + SECURITY_SWITCH_NAME;
+const String        MQTT_SECURITY_SWITCH_TOPIC_STATE =  MQTT_SECURITY_SWITCH_TOPIC + MQTT_TOPIC_STATE_SUFFIX;
 
 
 const int           topicsNumber = 6;
@@ -166,6 +173,7 @@ bool                lightState = true;
 bool                waterPumpState = true;
 bool                airPumpState = true;
 bool                floatSensorState = true;
+
 float               temperature;
 float               humidity;
 float               tds;
@@ -290,7 +298,6 @@ void loop()
 
   
   //tds sample for algorithm
-
   if(currentMillis - tdsSamplePreviousMillis > sendDataPeriod/numberOfSamples){     //every 1/n of dataPeriod milliseconds,read the analog value from the ADC
       analogBuffer[analogBufferIndex] = analogRead(TDS);    //read the analog value and store into the buffer
       analogBufferIndex++;
@@ -767,6 +774,41 @@ void mqttHomeAssistantDiscovery()
 
     mqttPubSub.publish(discoveryTopic.c_str(), strPayload.c_str());
 
+    ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    // SECURITY SWITCH
+    ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    
+    delay(500);
+
+
+    payload.clear();
+    device.clear();
+    identifiers.clear();
+    strPayload.clear();
+
+    discoveryTopic = MQTT_SECURITY_SWITCH_TOPIC + MQTT_TOPIC_DISCOVERY_SUFFIX;
+
+    
+    payload["name"] = DEVICE_NAME + SECURITY_SWITCH_NAME;
+    payload["unique_id"] = UNIQUE_ID + SECURITY_SWITCH_NAME;
+    payload["state_topic"] = MQTT_SECURITY_SWITCH_TOPIC_STATE;
+    payload["command_topic"] = MQTT_TOPIC_OPTION;
+    payload["device_class"] = "switch";
+
+    device = payload.createNestedObject("device");
+
+    device["name"] = DEVICE_NAME;
+    device["model"] = DEVICE_MODEL;
+    device["sw_version"] = SOFTWARE_VERSION;
+    device["manufacturer"] = MANUFACTURER;
+    identifiers = device.createNestedArray("identifiers");
+    identifiers.add(UNIQUE_ID);
+
+    serializeJsonPretty(payload, Serial);
+    Serial.println(" ");
+    serializeJson(payload, strPayload);
+
+    mqttPubSub.publish(discoveryTopic.c_str(), strPayload.c_str());
 
   }
 }
@@ -834,7 +876,7 @@ void mqttReceiverCallback(char* topic, byte* payload, unsigned int length)
       temp = json["sendDataPeriod"];
       if(temp < 5000)
         temp = PERIOD_SECOND_5;
-        sendDataPeriod = temp;
+      sendDataPeriod = temp;
       Serial.print("sendDataPeriod: ");
       Serial.println(sendDataPeriod);
 
@@ -842,18 +884,20 @@ void mqttReceiverCallback(char* topic, byte* payload, unsigned int length)
       temp = json["pollingDataPeriod"];
       if(temp < 3000)
         temp = 3000;
-        pollingDataPeriod = temp;
+      pollingDataPeriod = temp;
       Serial.print("pollingDataPeriod: ");
       Serial.println(pollingDataPeriod);
 
-      //BYPASS SECURITY
+      //BYPASS SECURITY //TODO VERIFICARE SE BYPASSPUMPSECURITY è NULL
       bypassPumpSecurity = json["bypassPumpSecurity"];
       
       if(bypassPumpSecurity)
-        Serial.println("PUMP SECURITY BYPASSED");
+        Serial.println("PUMP SECURITY REMOVED");
       else
-        Serial.println("PUMP SECURITY BYPASS REMOVED");
-        
+        Serial.println("PUMP SECURITY ENABLED");
+
+
+        mqttStates();
     }
 
 
@@ -998,16 +1042,21 @@ void tdsLogic(){
     //convert voltage value to tds value
     tds = (133.42 * compensationVoltage * compensationVoltage * compensationVoltage - 255.86 * compensationVoltage*  compensationVoltage + 857.39 * compensationVoltage) * 0.5;
   }
-  mqttStates();
+  //mqttStates();   //TODO CHECK
 }
 
 //check the states and send to MQTT server
 void mqttStates(){
   
   mqttPubSub.publish(MQTT_LIGHT_TOPIC_STATE.c_str(), (lightState ? "ON" : "OFF"));
+  //delay(10);
   mqttPubSub.publish(MQTT_FLOAT_SENSOR_TOPIC_STATE.c_str(), (floatSensorState ? "ON" : "OFF"));
+  //delay(10);
   mqttPubSub.publish(MQTT_WATER_PUMP_TOPIC_STATE.c_str(), (waterPumpState ? "ON" : "OFF"));
+  //delay(10);
   mqttPubSub.publish(MQTT_AIR_PUMP_TOPIC_STATE.c_str(), (airPumpState ? "ON" : "OFF"));
+  //delay(10);
+  mqttPubSub.publish(MQTT_SECURITY_SWITCH_TOPIC_STATE.c_str(), (bypassPumpSecurity ? "ON" : "OFF"));
   
   //am2320
   StaticJsonDocument<200> payload;
