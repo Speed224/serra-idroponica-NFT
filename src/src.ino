@@ -1,6 +1,3 @@
-
-//TODO CONTROLLARE LA ZONA COMANDI, BLOCCA TUTTO
-
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
 /*------------------------------------Include Files----------------------------------------------------------------------------------------------*/
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
@@ -81,7 +78,9 @@ const char*         SOFTWARE_VERSION = "0.1";                                 //
 const char*         MANUFACTURER = "Speed224";                                // Manufacturer Name
 const String        DEVICE_NAME = "serra";                                    // Device Name
 const String        MQTT_TOPIC_STATUS = "esp32iot/" + DEVICE_NAME;
+
 const String        MQTT_TOPIC_HA_PREFIX = "homeassistant/";
+
 const String        MQTT_TOPIC_DISCOVERY_SUFFIX = "/config";
 const String        MQTT_TOPIC_STATE_SUFFIX = "/state";
 const String        MQTT_TOPIC_COMMAND_SUFFIX = "/command";
@@ -92,40 +91,24 @@ const String        MQTT_TOPIC_COMMAND = MQTT_TOPIC_HA_PREFIX + MQTT_TOPIC_STATU
 const String        MQTT_TOPIC_HA_STATUS = MQTT_TOPIC_HA_PREFIX + "status";
 
 //Sensor && Actuator Topics
-
-//todo sostituire command e state per liberare memoria
-
 const String        MQTT_LIGHT_TOPIC =  MQTT_TOPIC_HA_PREFIX + "light/" + MQTT_TOPIC_STATUS + LIGHT_NAME;
-const String        MQTT_LIGHT_TOPIC_STATE =  MQTT_LIGHT_TOPIC + MQTT_TOPIC_STATE_SUFFIX; 
-const String        MQTT_LIGHT_TOPIC_COMMAND =  MQTT_LIGHT_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX;
-
 // WATER PUMP
 const String        MQTT_WATER_PUMP_TOPIC =  MQTT_TOPIC_HA_PREFIX + "switch/" + MQTT_TOPIC_STATUS + WATER_PUMP_NAME;
-const String        MQTT_WATER_PUMP_TOPIC_STATE =  MQTT_WATER_PUMP_TOPIC + MQTT_TOPIC_STATE_SUFFIX; 
-const String        MQTT_WATER_PUMP_TOPIC_COMMAND =  MQTT_WATER_PUMP_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX; 
-
 // AIR PUMP
 const String        MQTT_AIR_PUMP_TOPIC =  MQTT_TOPIC_HA_PREFIX + "switch/" + MQTT_TOPIC_STATUS + AIR_PUMP_NAME;
-const String        MQTT_AIR_PUMP_TOPIC_STATE =  MQTT_AIR_PUMP_TOPIC + MQTT_TOPIC_STATE_SUFFIX; 
-const String        MQTT_AIR_PUMP_TOPIC_COMMAND =  MQTT_AIR_PUMP_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX; 
-
 // THERMOMETER
 const String        MQTT_TEMPERATURE_TOPIC =  MQTT_TOPIC_HA_PREFIX + "sensor/" + MQTT_TOPIC_STATUS + TEMPERATURE_NAME;
 const String        MQTT_HUMIDITY_TOPIC =  MQTT_TOPIC_HA_PREFIX + "sensor/" + MQTT_TOPIC_STATUS + HUMIDITY_NAME;
 const String        MQTT_THERMOMETER_TOPIC_STATE =  MQTT_TOPIC_HA_PREFIX + "sensor/" + MQTT_TOPIC_STATUS + "_thermometer" + MQTT_TOPIC_STATE_SUFFIX;
-
 // WATER QUALITY
 const String        MQTT_TDS_TOPIC =  MQTT_TOPIC_HA_PREFIX + "sensor/" + MQTT_TOPIC_STATUS + TDS_NAME;
 //const String        MQTT_PH_TOPIC =  MQTT_TOPIC_HA_PREFIX + "sensor/" + MQTT_TOPIC_STATUS + PH_NAME;
 const String        MQTT_WATER_QUALITY_TOPIC_STATE =  MQTT_TOPIC_HA_PREFIX + "sensor/" + MQTT_TOPIC_STATUS + "_water_quality" + MQTT_TOPIC_STATE_SUFFIX;
-
 //WATER LEVEL
 const String        MQTT_FLOAT_SENSOR_TOPIC =  MQTT_TOPIC_HA_PREFIX + "binary_sensor/" + MQTT_TOPIC_STATUS + FLOAT_SENSOR_NAME;
-const String        MQTT_FLOAT_SENSOR_TOPIC_STATE =  MQTT_FLOAT_SENSOR_TOPIC + MQTT_TOPIC_STATE_SUFFIX;
-
 //OPTIONS STATE
 const String        MQTT_SECURITY_SWITCH_TOPIC =  MQTT_TOPIC_HA_PREFIX + "switch/" + MQTT_TOPIC_STATUS + SECURITY_SWITCH_NAME;
-const String        MQTT_SECURITY_SWITCH_TOPIC_STATE =  MQTT_SECURITY_SWITCH_TOPIC + MQTT_TOPIC_STATE_SUFFIX;
+
 
 
 const int           topicsNumber = 6;
@@ -133,9 +116,9 @@ const String        topics[topicsNumber] = {
                                             MQTT_TOPIC_HA_STATUS, 
                                             MQTT_TOPIC_OPTION, 
                                             MQTT_TOPIC_COMMAND, 
-                                            MQTT_LIGHT_TOPIC_COMMAND, 
-                                            MQTT_WATER_PUMP_TOPIC_COMMAND,
-                                            MQTT_AIR_PUMP_TOPIC_COMMAND
+                                            (MQTT_LIGHT_TOPIC + (MQTT_LIGHT_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX)), 
+                                            (MQTT_WATER_PUMP_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX),
+                                            (MQTT_AIR_PUMP_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX)
 
                                            };
 
@@ -539,8 +522,8 @@ void mqttHomeAssistantDiscovery()
     
     payload["name"] = DEVICE_NAME + LIGHT_NAME;
     payload["unique_id"] = UNIQUE_ID + LIGHT_NAME;
-    payload["state_topic"] = MQTT_LIGHT_TOPIC_STATE;
-    payload["command_topic"] = MQTT_LIGHT_TOPIC_COMMAND;
+    payload["state_topic"] = (MQTT_LIGHT_TOPIC + MQTT_TOPIC_STATE_SUFFIX);
+    payload["command_topic"] = (MQTT_LIGHT_TOPIC + (MQTT_LIGHT_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX));
 
 
     device = payload.createNestedObject("device");
@@ -575,8 +558,8 @@ void mqttHomeAssistantDiscovery()
     
     payload["name"] = DEVICE_NAME + WATER_PUMP_NAME;
     payload["unique_id"] = UNIQUE_ID + WATER_PUMP_NAME;
-    payload["state_topic"] = MQTT_WATER_PUMP_TOPIC_STATE;
-    payload["command_topic"] = MQTT_WATER_PUMP_TOPIC_COMMAND;
+    payload["state_topic"] = (MQTT_WATER_PUMP_TOPIC + MQTT_TOPIC_STATE_SUFFIX);
+    payload["command_topic"] = (MQTT_WATER_PUMP_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX);
     payload["device_class"] = "switch";
 
     device = payload.createNestedObject("device");
@@ -611,8 +594,8 @@ void mqttHomeAssistantDiscovery()
     
     payload["name"] = DEVICE_NAME + AIR_PUMP_NAME;
     payload["unique_id"] = UNIQUE_ID + AIR_PUMP_NAME;
-    payload["state_topic"] = MQTT_AIR_PUMP_TOPIC_STATE;
-    payload["command_topic"] = MQTT_AIR_PUMP_TOPIC_COMMAND;
+    payload["state_topic"] = (MQTT_WATER_PUMP_TOPIC + (MQTT_AIR_PUMP_TOPIC + MQTT_TOPIC_STATE_SUFFIX));
+    payload["command_topic"] = (MQTT_AIR_PUMP_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX);
     payload["device_class"] = "switch";
 
     device = payload.createNestedObject("device");
@@ -758,7 +741,7 @@ void mqttHomeAssistantDiscovery()
     
     payload["name"] = DEVICE_NAME + FLOAT_SENSOR_NAME;
     payload["unique_id"] = UNIQUE_ID + FLOAT_SENSOR_NAME;
-    payload["state_topic"] = MQTT_FLOAT_SENSOR_TOPIC_STATE;
+    payload["state_topic"] = (MQTT_FLOAT_SENSOR_TOPIC + MQTT_TOPIC_STATE_SUFFIX);
 
 
 
@@ -794,7 +777,7 @@ void mqttHomeAssistantDiscovery()
     
     payload["name"] = DEVICE_NAME + SECURITY_SWITCH_NAME;
     payload["unique_id"] = UNIQUE_ID + SECURITY_SWITCH_NAME;
-    payload["state_topic"] = MQTT_SECURITY_SWITCH_TOPIC_STATE;
+    payload["state_topic"] = (MQTT_SECURITY_SWITCH_TOPIC + MQTT_TOPIC_STATE_SUFFIX);
     payload["command_topic"] = MQTT_TOPIC_OPTION;
     payload["device_class"] = "switch";
 
@@ -914,7 +897,7 @@ void mqttReceiverCallback(char* topic, byte* payload, unsigned int length)
       commandExecutor((char)payload[0]);
     }
 
-    if(String(topic) == String(MQTT_LIGHT_TOPIC_COMMAND)) 
+    if(String(topic) == String((MQTT_LIGHT_TOPIC + (MQTT_LIGHT_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX)))) 
     {
       if(message == "ON")
         lightLogic(true);
@@ -924,7 +907,7 @@ void mqttReceiverCallback(char* topic, byte* payload, unsigned int length)
       mqttStates();
     }
 
-    if(String(topic) == String(MQTT_WATER_PUMP_TOPIC_COMMAND)) 
+    if(String(topic) == String((MQTT_WATER_PUMP_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX))) 
     {
       //if there is water or bypass is true
       if(floatSensorState || bypassPumpSecurity){
@@ -936,7 +919,7 @@ void mqttReceiverCallback(char* topic, byte* payload, unsigned int length)
       mqttStates();
     }
 
-    if(String(topic) == String(MQTT_AIR_PUMP_TOPIC_COMMAND)) 
+    if(String(topic) == String((MQTT_AIR_PUMP_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX))) 
     {
       if(message == "ON")
         airPumpLogic(true);
@@ -1055,15 +1038,15 @@ void tdsLogic(){
 //check the states and send to MQTT server
 void mqttStates(){
   
-  mqttPubSub.publish(MQTT_LIGHT_TOPIC_STATE.c_str(), (lightState ? "ON" : "OFF"));
+  mqttPubSub.publish((MQTT_LIGHT_TOPIC + MQTT_TOPIC_STATE_SUFFIX).c_str(), (lightState ? "ON" : "OFF"));
   //delay(10);
-  mqttPubSub.publish(MQTT_FLOAT_SENSOR_TOPIC_STATE.c_str(), (floatSensorState ? "ON" : "OFF"));
+  mqttPubSub.publish((MQTT_FLOAT_SENSOR_TOPIC + MQTT_TOPIC_STATE_SUFFIX).c_str(), (floatSensorState ? "ON" : "OFF"));
   //delay(10);
-  mqttPubSub.publish(MQTT_WATER_PUMP_TOPIC_STATE.c_str(), (waterPumpState ? "ON" : "OFF"));
+  mqttPubSub.publish((MQTT_WATER_PUMP_TOPIC + MQTT_TOPIC_STATE_SUFFIX).c_str(), (waterPumpState ? "ON" : "OFF"));
   //delay(10);
-  mqttPubSub.publish(MQTT_AIR_PUMP_TOPIC_STATE.c_str(), (airPumpState ? "ON" : "OFF"));
+  mqttPubSub.publish((MQTT_WATER_PUMP_TOPIC + (MQTT_AIR_PUMP_TOPIC + MQTT_TOPIC_STATE_SUFFIX)).c_str(), (airPumpState ? "ON" : "OFF"));
   //delay(10);
-  mqttPubSub.publish(MQTT_SECURITY_SWITCH_TOPIC_STATE.c_str(), (bypassPumpSecurity ? "ON" : "OFF"));
+  mqttPubSub.publish((MQTT_SECURITY_SWITCH_TOPIC + MQTT_TOPIC_STATE_SUFFIX).c_str(), (bypassPumpSecurity ? "ON" : "OFF"));
   
   //am2320
   StaticJsonDocument<200> payload;
