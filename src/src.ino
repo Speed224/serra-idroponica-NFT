@@ -1,3 +1,6 @@
+
+//TODO CONTROLLARE LA ZONA COMANDI, BLOCCA TUTTO
+
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
 /*------------------------------------Include Files----------------------------------------------------------------------------------------------*/
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
@@ -876,6 +879,8 @@ void mqttReceiverCallback(char* topic, byte* payload, unsigned int length)
       temp = json["sendDataPeriod"];
       if(temp < 5000)
         temp = PERIOD_SECOND_5;
+      if(temp == 0)
+        temp = sendDataPeriod;
       sendDataPeriod = temp;
       Serial.print("sendDataPeriod: ");
       Serial.println(sendDataPeriod);
@@ -884,6 +889,8 @@ void mqttReceiverCallback(char* topic, byte* payload, unsigned int length)
       temp = json["pollingDataPeriod"];
       if(temp < 3000)
         temp = 3000;
+      if(temp == 0)
+        temp = pollingDataPeriod
       pollingDataPeriod = temp;
       Serial.print("pollingDataPeriod: ");
       Serial.println(pollingDataPeriod);
