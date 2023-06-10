@@ -11,7 +11,7 @@ void setup() {
   Serial.begin(115200);
   Serial.println();
   
-  preferences.begin("credentials", false);
+  preferences.begin("credentials", true);
  
   ssid = preferences.getString("SSID", ""); 
   password = preferences.getString("PASSWORD", "");
