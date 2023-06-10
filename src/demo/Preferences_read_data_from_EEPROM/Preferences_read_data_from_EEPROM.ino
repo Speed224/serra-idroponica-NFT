@@ -20,9 +20,12 @@ void setup() {
     Serial.println("No values saved for ssid or password");
   }
   else {
-    Serial.printf("ssid: %s\n", ssid);
-    Serial.printf("password: %s\n", password);
+    Serial.print("ssid: ");
+    Serial.println(ssid);
+    Serial.print("password: ");
+    Serial.println(password);
   }
+  
   preferences.end();
 }
 
