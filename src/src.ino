@@ -1,5 +1,3 @@
-//TODO CONTROLLARE LA ZONA COMANDI, BLOCCA TUTTO
-
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
 /*------------------------------------Include Files----------------------------------------------------------------------------------------------*/
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
@@ -13,7 +11,7 @@
 
 
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
-/*------------------------------------Local definitions------------------------------------------------------------------------------------------*/
+/*------------------------------------TIME definitions-------------------------------------------------------------------------------------------*/
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
 #define PERIOD_SECOND_1         1000
 #define PERIOD_SECOND_5         5000
@@ -29,15 +27,13 @@
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
 /*------------------------------------I/O Definitions--------------------------------------------------------------------------------------------*/
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
-const byte                POT = 35;
 const byte                LIGHT = 32;
 const byte                WATER_PUMP = 33;
 const byte                TDS = 34;
-//const byte              PH = 35;
+const byte                PH = 35;
 const byte                AIR_PUMP = 19;
 const byte                FLOAT_SENSOR = 17;
 
-const String              POT_NAME = "pot";
 const String              LIGHT_NAME = "_light";
 const String              WATER_PUMP_NAME = "_waterpump";
 const String              AIR_PUMP_NAME = "_airpump";
@@ -47,36 +43,21 @@ const String              TDS_NAME = "_tds";
 const String              PH_NAME = "_ph";
 const String              FLOAT_SENSOR_NAME = "_floatsensor";
 const String              SECURITY_SWITCH_NAME = "_securityswitch";
-
-
-/*
-* TDS && PH 
-*/
-const byte SCOUNT = 30;            // sum of sample point
-const float VREF = 3.3;         //Volt
-
-int analogBuffer[SCOUNT];     // store the analog value in the array, read from ADC
-int analogBufferTemp[SCOUNT];
-int analogBufferIndex = 0;
-int copyIndex = 0;
-
-float averageVoltage = 0;
-float waterTemperature = 20;  
+ 
 
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
 /*------------------------------------Configuration----------------------------------------------------------------------------------------------*/
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
 String              WIFI_SSID;
 String              WIFI_PASSWORD;
-String              MQTT_SERVER = "192.168.1.225";                            // MQTT Server IP
+String              MQTT_SERVER = "ha.speed224.dev";                          // MQTT Server IP
 String              MQTT_USER;                                                // MQTT Server User Name
 String              MQTT_PASSWORD;                                            // MQTT Server password
 int                 MQTT_PORT = 1883;                                         // MQTT Server Port
 
 
-
 const char*         DEVICE_MODEL = "esp32Serra";                              // Hardware Model
-const char*         SOFTWARE_VERSION = "0.1";                                 // Firmware Version
+const char*         SOFTWARE_VERSION = "0.7";                                 // Firmware Version
 const char*         MANUFACTURER = "Speed224";                                // Manufacturer Name
 const String        DEVICE_NAME = "serra";                                    // Device Name
 const String        MQTT_TOPIC_STATUS = "esp32iot/" + DEVICE_NAME;
@@ -104,7 +85,7 @@ const String        MQTT_HUMIDITY_TOPIC =  MQTT_TOPIC_HA_PREFIX + "sensor/" + MQ
 const String        MQTT_THERMOMETER_TOPIC_STATE =  MQTT_TOPIC_HA_PREFIX + "sensor/" + MQTT_TOPIC_STATUS + "_thermometer" + MQTT_TOPIC_STATE_SUFFIX;
 // WATER QUALITY
 const String        MQTT_TDS_TOPIC =  MQTT_TOPIC_HA_PREFIX + "sensor/" + MQTT_TOPIC_STATUS + TDS_NAME;
-//const String        MQTT_PH_TOPIC =  MQTT_TOPIC_HA_PREFIX + "sensor/" + MQTT_TOPIC_STATUS + PH_NAME;
+const String        MQTT_PH_TOPIC =  MQTT_TOPIC_HA_PREFIX + "sensor/" + MQTT_TOPIC_STATUS + PH_NAME;
 const String        MQTT_WATER_QUALITY_TOPIC_STATE =  MQTT_TOPIC_HA_PREFIX + "sensor/" + MQTT_TOPIC_STATUS + "_water_quality" + MQTT_TOPIC_STATE_SUFFIX;
 //WATER LEVEL
 const String        MQTT_FLOAT_SENSOR_TOPIC =  MQTT_TOPIC_HA_PREFIX + "binary_sensor/" + MQTT_TOPIC_STATUS + FLOAT_SENSOR_NAME;
@@ -139,22 +120,25 @@ short               numberOfSamples = 5;
 String              UNIQUE_ID;
 bool                sendMqttData = false;
 
-//DEFAULT wait time for sending data
-unsigned int        pollingDataPeriod = PERIOD_SECOND_1*4;
+
+unsigned int        pollingDataPeriod = PERIOD_SECOND_1*4;        //DEFAULT wait time for sending data
 unsigned int        sendDataPeriod = PERIOD_SECOND_5;
 
 unsigned long       pollingPreviousMillis = 0;
 unsigned long       dataPreviousMillis = 0;
 unsigned long       wifiPreviousMillis = 0;
 unsigned long       lightPreviousMillis = 0;
-unsigned long       tdsSamplePreviousMillis = 0;
+unsigned long       samplePreviousMillis = 0;
+unsigned long       mqttLoopPreviousMillis = 0;
+
+
 unsigned long       currentMillis;
 
 unsigned int        lightONPeriod = PERIOD_HOUR_1*12;
 unsigned int        lightOFFPeriod = PERIOD_HOUR_1*12;
 
 char                command;
-bool                bypassPumpSecurity = false;
+bool                pumpSecurity = false;
 
 bool                isDayTime = true;
 bool                lightState = true;
@@ -162,20 +146,39 @@ bool                waterPumpState = true;
 bool                airPumpState = true;
 bool                floatSensorState = true;
 
+float               temperatureOffset = 2;
 float               temperature;
 float               humidity;
 float               tds;
-//float             ph;
+float               ph;
+
+/*
+* TDS && PH 
+*/
+const byte SCOUNT = 30;                 // sum of sample point
+const float VREF = 3.3;                 //Volt sensor alimentation
+const int analogResolution = 4096;
+
+int tdsAnalogBuffer[SCOUNT];            // store the analog value in the array, read from ADC
+int tdsAnalogBufferTemp[SCOUNT];
+int tdsAnalogBufferIndex = 0;
+
+int phAnalogBuffer[SCOUNT];             // store the analog value in the array, read from ADC
+int phAnalogBufferTemp[SCOUNT];
+int phAnalogBufferIndex = 0;
 
 
-// INTERRUPT FUNCTION
+/*-----------------------------------------------------------------------------------------------------------------------------------------------*/
+/*------------------------------------INTERRUPT FUNCTIONS----------------------------------------------------------------------------------------*/
+/*-----------------------------------------------------------------------------------------------------------------------------------------------*/
+
+// when float sensor fall
 void IRAM_ATTR floatSensorISR(){
-  if(!bypassPumpSecurity){
+  if(!pumpSecurity){
     waterPumpState = false;
     floatSensorState = false;
     sendMqttData = true;
   }
-  
 }
 
 
@@ -188,14 +191,15 @@ void setup()
   Serial.println("Inizio setup");
 
 
-  //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-  // Input output Pin definitions
-  //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-  pinMode(POT, INPUT);
+/*-----------------------------------------------------------------------------------------------------------------------------------------------*/
+/*------------------------------------GPIO DEFINITION--------------------------------------------------------------------------------------------*/
+/*-----------------------------------------------------------------------------------------------------------------------------------------------*/
   pinMode(LIGHT, OUTPUT);
   pinMode(WATER_PUMP, OUTPUT);
   pinMode(AIR_PUMP, OUTPUT);
   pinMode(TDS, INPUT);
+  pinMode(PH, INPUT);
+
 
   pinMode(FLOAT_SENSOR, INPUT_PULLUP);
   attachInterrupt(FLOAT_SENSOR, floatSensorISR, FALLING);
@@ -203,31 +207,60 @@ void setup()
   Wire.begin();
   am2320.setWire(&Wire);
 
+/*-----------------------------------------------------------------------------------------------------------------------------------------------*/
+/*------------------------------------LOGIC------------------------------------------------------------------------------------------------------*/
+/*-----------------------------------------------------------------------------------------------------------------------------------------------*/
+  lightLogic(lightState);
+  floatSensorLogic();
+  waterPumpLogic(waterPumpState);
+  airPumpLogic(airPumpState);
+  am2320Logic();
+  tdsLogic();
+  phLogic();
 
 
-
+/*-----------------------------------------------------------------------------------------------------------------------------------------------*/
+/*------------------------------------CONNECTIONS------------------------------------------------------------------------------------------------*/
+/*-----------------------------------------------------------------------------------------------------------------------------------------------*/
   preferences.begin("credentials", true);
 
   WIFI_SSID = preferences.getString("SSID", ""); 
   WIFI_PASSWORD = preferences.getString("PASSWORD", "");
+  MQTT_SERVER = preferences.getString("MQTT_SERVER", "");
   MQTT_USER = preferences.getString("MQTT_USER", ""); 
   MQTT_PASSWORD = preferences.getString("MQTT_PASSWORD", "");
 
-  Serial.printf("\nSSID: %s", WIFI_SSID);
-  Serial.printf("\nPASSWORD: %s\n", WIFI_PASSWORD);
-  Serial.printf("\nMQTT_USER: %s", MQTT_USER);
-  Serial.printf("\nMQTT_PASSWORD: %s\n", MQTT_PASSWORD);
+  preferences.end();
+  /*
+  Serial.print("\nSSID: ");
+  Serial.println(WIFI_SSID);
+  Serial.print("\nPASSWORD: ");
+  Serial.println(WIFI_PASSWORD);
 
-  
-
+  Serial.print("\nSERVER: ");
+  Serial.println(MQTT_SERVER);
+  Serial.print("\nMQTT_USER: ");
+  Serial.println(MQTT_USER);
+  Serial.print("\nMQTT_PASSWORD: ");
+  Serial.println(MQTT_PASSWORD);
+  */
   if (WIFI_SSID == "" || WIFI_PASSWORD == ""){
     Serial.println("No values saved for ssid or password");
   }
  
+  delay(200);
 
-  delay(500);
+  wifiSetup();
 
-  Serial.println("");
+  //MQTT OPTIONS
+  mqttPubSub.setServer(MQTT_SERVER.c_str(), MQTT_PORT);
+  mqttPubSub.setCallback(mqttReceiverCallback);
+  mqttPubSub.setBufferSize(600);
+
+  mqttConnect();
+
+
+  //printing device information
   Serial.println("");
   Serial.println("----------------------------------------------");
   Serial.print("MODEL: ");
@@ -237,31 +270,8 @@ void setup()
   Serial.print("SW Rev: ");
   Serial.println(SOFTWARE_VERSION);
   Serial.println("----------------------------------------------");
-  
-  //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-  // Wifi Init
-  //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-  wifiSetup();
 
-  //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-  // MQTT Init
-  //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-  mqttPubSub.setServer(MQTT_SERVER.c_str(), MQTT_PORT);
-  mqttPubSub.setCallback(mqttReceiverCallback);
-  mqttPubSub.setBufferSize(600);
-
-  mqttConnect();
-
-
-
-  //ALL THE LOGIC THAT MUST START ANYWAY AFTER A REBOOT
-  lightLogic(lightState);
-  floatSensorLogic();
-  waterPumpLogic(waterPumpState);
-  airPumpLogic(airPumpState);
-  am2320Logic();
-  tdsLogic();
-
+  delay(200);
 }
 
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
@@ -269,10 +279,17 @@ void setup()
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
 void loop() 
 {
-  currentMillis = millis();
-  mqttPubSub.loop(); //call often (docs)
+  currentMillis = millis();                                           //
   
-  if(currentMillis - pollingPreviousMillis > pollingDataPeriod)
+
+  if(currentMillis - mqttLoopPreviousMillis > 200){
+    mqttPubSub.loop();                                                //call often (docs), if called too fast could occur MQTT issues
+
+    mqttLoopPreviousMillis = currentMillis;                           //save current millis in previous for offsetting
+  }
+
+  
+  if(currentMillis - pollingPreviousMillis > pollingDataPeriod)       //sensor polling is splitted from INTERENET activities
   {
     lightLogic(lightState);
     floatSensorLogic();
@@ -280,44 +297,47 @@ void loop()
     airPumpLogic(airPumpState);
     am2320Logic();
     tdsLogic();
+    phLogic();
 
     pollingPreviousMillis = currentMillis;
   }
 
   
-  //tds sample for algorithm
-  if(currentMillis - tdsSamplePreviousMillis > sendDataPeriod/numberOfSamples){     //every 1/n of dataPeriod milliseconds,read the analog value from the ADC
-      analogBuffer[analogBufferIndex] = analogRead(TDS);    //read the analog value and store into the buffer
-      analogBufferIndex++;
-      if(analogBufferIndex == SCOUNT){ 
-        analogBufferIndex = 0;
+  //PH and TDS sampling for median algortihm
+  if(currentMillis - samplePreviousMillis > sendDataPeriod/numberOfSamples){      //every 1/n of dataPeriod milliseconds,read the analog value from the ADC
+      tdsAnalogBuffer[tdsAnalogBufferIndex] = analogRead(TDS);                    //read the analog value and store into the buffer
+      tdsAnalogBufferIndex++;
+      if(tdsAnalogBufferIndex == SCOUNT){ 
+        tdsAnalogBufferIndex = 0;
       }
 
-      tdsSamplePreviousMillis = currentMillis;
+      phAnalogBuffer[phAnalogBufferIndex] = analogRead(PH);                       //read the analog value and store into the buffer
+      phAnalogBufferIndex++;
+      if(phAnalogBufferIndex == SCOUNT){ 
+        phAnalogBufferIndex = 0;
+      }
+
+      samplePreviousMillis = currentMillis;
     }   
 
-
+  //is called when sendDataPeriod time pass or sendMqttData is true, usefull for instant sensor refresh
   if(currentMillis - dataPreviousMillis > sendDataPeriod || sendMqttData)
   {
-    dataPreviousMillis = currentMillis;
-
+    //if mqtt is not connected try to connect else send data
     if(!mqttPubSub.connected())
       mqttConnect();
     else{
       mqttStates();
-    
-      bool error = mqttSendData("pot", (String)analogRead(POT));
-      if(!error)
-        Serial.println("MQTT: ERROR cannot send data");
-      else
-        Serial.println("MQTT: Sending Data");
 
-      sendMqttData = false;
       
+      sendMqttData = false;
     }
+
+    dataPreviousMillis = currentMillis;
   }
 
 
+  //light cycle TODO
   if(isDayTime){
     if(currentMillis - lightPreviousMillis >= lightONPeriod) {
       lightLogic(true);
@@ -336,7 +356,7 @@ void loop()
 
   
   
-  
+  //every minutes check if there is wifi connection else try to reconnect
   if (currentMillis - wifiPreviousMillis >= PERIOD_MINUTE_1) {
     if(WiFi.status() != WL_CONNECTED)
       wifiSetup();
@@ -345,7 +365,7 @@ void loop()
   }
 
 
-
+  //read command from serial
   if(Serial.available())
     command = Serial.read();
   commandExecutor(command);  
@@ -358,63 +378,57 @@ void loop()
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
 void wifiSetup() 
 {
-    WiFi.disconnect();
-    WiFi.mode(WIFI_STA);
+  WiFi.disconnect();
+  WiFi.mode(WIFI_STA);        //define connection tipe
 
-    int counter = 0;
-    byte mac[6];
-    delay(10);
-    
-    // We start by connecting to a WiFi network
-    Serial.print("Connecting to ");
-    Serial.println(WIFI_SSID);
+  int counter = 0;
+  byte mac[6];
+  delay(10);
+  
+                              //connecting to a WiFi network
+  Serial.print("Connecting to ");
+  Serial.println(WIFI_SSID);
 
-    WiFi.begin(WIFI_SSID.c_str(), WIFI_PASSWORD.c_str());
+  WiFi.begin(WIFI_SSID.c_str(), WIFI_PASSWORD.c_str());
 
-    WiFi.macAddress(mac);
-    UNIQUE_ID = String(mac[0],HEX) +String(mac[1],HEX) +String(mac[2],HEX) +String(mac[3],HEX) + String(mac[4],HEX) + String(mac[5],HEX);
+  WiFi.macAddress(mac);
+  UNIQUE_ID = String(mac[0],HEX) +String(mac[1],HEX) +String(mac[2],HEX) +String(mac[3],HEX) + String(mac[4],HEX) + String(mac[5],HEX);
 
-    Serial.print("Unique ID: ");
-    Serial.println(UNIQUE_ID);    
-   
-    while(WiFi.status() != WL_CONNECTED && counter++ < 8) 
-    {
-      delay(1000);
-      Serial.print(".");
-    }
-    Serial.println("");
+  Serial.print("Unique ID: ");
+  Serial.println(UNIQUE_ID);    
+  
+  //wait if the connection begin
+  while(WiFi.status() != WL_CONNECTED && counter++ < 8){
+    delay(1000);
+    Serial.print(".");
+  }
+  Serial.println("");
 
-    if(WiFi.status() == WL_CONNECTED)
-    {
-      Serial.println("WiFi connected");
-      Serial.print("IP address: ");
-      Serial.println(WiFi.localIP());
-    } else
-    {
-      Serial.println("WiFi NOT connected!!!");
-    }
+  if(WiFi.status() == WL_CONNECTED){
+    Serial.println("WiFi connected");
+    Serial.print("IP address: ");
+    Serial.println(WiFi.localIP());
+  }else{
+    Serial.println("WiFi NOT connected!!!");
+  }
 }
 
-void mqttConnect() 
-{
+void mqttConnect() {
   mqttPubSub.disconnect();
-  if (WiFi.status() == WL_CONNECTED)
-  {
-    if(!mqttPubSub.connected())
-    {
+  if (WiFi.status() == WL_CONNECTED){
+    if(!mqttPubSub.connected()){
       Serial.print("Attempting MQTT connection...");
-      // Attempt to connect
-      if (mqttPubSub.connect(DEVICE_NAME.c_str(), MQTT_USER.c_str(), MQTT_PASSWORD.c_str())) 
-      {
+      // attempt to connect
+      if (mqttPubSub.connect(DEVICE_NAME.c_str(), MQTT_USER.c_str(), MQTT_PASSWORD.c_str())) {
         Serial.println("connected");
-        //subscribe to topics
+        // subscribe to topics
         mqttTopicsSubscribe(topics, topicsNumber);
+        //only the first time is connected to MQTT send discovery info
         if (firstBoot){
           mqttHomeAssistantDiscovery();
           firstBoot = false;
         }
-      } else 
-      {
+      }else {
         Serial.print("failed, rc=");
         Serial.print(mqttPubSub.state());
         Serial.println();
@@ -425,6 +439,7 @@ void mqttConnect()
   }
 }
 
+//subscribes to defined topics
 void mqttTopicsSubscribe(const String topics[topicsNumber], const int topicsNumber){
   for(int i = 0; i < topicsNumber; i++){
     String success = (mqttPubSub.subscribe(topics[i].c_str())) ? "Subscribed" : "ERROR cannot subscribe";
@@ -436,22 +451,7 @@ void mqttTopicsSubscribe(const String topics[topicsNumber], const int topicsNumb
       
 }
 
-bool mqttSendData(String sensorName, String data){
-  StaticJsonDocument<200> payload;
-
-  payload[String(sensorName)] = data;
-
-  String strPayload;
-  serializeJson(payload, strPayload);
-
-
-  String potStateTopic = MQTT_TOPIC_HA_PREFIX + "sensor/" + MQTT_TOPIC_STATUS + '_' + sensorName + MQTT_TOPIC_STATE_SUFFIX;
-  return mqttPubSub.publish(potStateTopic.c_str(), strPayload.c_str());
-  
-}
-
-
-
+//Discovery information for HOMEASSISTANT MQTT integration
 void mqttHomeAssistantDiscovery()
 {
   String discoveryTopic;
@@ -463,55 +463,18 @@ void mqttHomeAssistantDiscovery()
   String payload;
   String strPayload;
 
-  
 
   if(mqttPubSub.connected())
   {
     Serial.println("SEND HOME ASSISTANT DISCOVERY!!!");
 
-    delay(500);
-
-
     StaticJsonDocument<600> payload;
     JsonObject device;
     JsonArray identifiers;
-
-    ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-    // POT
-    ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-    name = "_" + POT_NAME;
-    topic = MQTT_TOPIC_HA_PREFIX + "sensor/" + MQTT_TOPIC_STATUS + name;
-    discoveryTopic = topic + MQTT_TOPIC_DISCOVERY_SUFFIX;
-    stateTopic = topic + MQTT_TOPIC_STATE_SUFFIX;
     
-    payload["name"] = DEVICE_NAME + name;
-    payload["unique_id"] = UNIQUE_ID + name;
-    payload["state_topic"] = stateTopic;
-    payload["value_template"] = "{{ value_json.pot | is_defined }}";
-    payload["device_class"] = "voltage";
-    payload["unit_of_measurement"] = "mV";
-
-
-    device = payload.createNestedObject("device");
-
-    device["name"] = DEVICE_NAME;
-    device["model"] = DEVICE_MODEL;
-    device["sw_version"] = SOFTWARE_VERSION;
-    device["manufacturer"] = MANUFACTURER;
-    identifiers = device.createNestedArray("identifiers");
-    identifiers.add(UNIQUE_ID);
-
-    serializeJsonPretty(payload, Serial);
-    Serial.println(" ");
-    serializeJson(payload, strPayload);
-
-    mqttPubSub.publish(discoveryTopic.c_str(), strPayload.c_str());
-
-    ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-    // LIGHT
-    ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-    
+  /////////////
+ // LIGHT ////
+/////////////
     delay(500);
     
     payload.clear();
@@ -521,15 +484,12 @@ void mqttHomeAssistantDiscovery()
 
     discoveryTopic = MQTT_LIGHT_TOPIC + MQTT_TOPIC_DISCOVERY_SUFFIX;
 
-    
     payload["name"] = DEVICE_NAME + LIGHT_NAME;
     payload["unique_id"] = UNIQUE_ID + LIGHT_NAME;
     payload["state_topic"] = (MQTT_LIGHT_TOPIC + MQTT_TOPIC_STATE_SUFFIX);
     payload["command_topic"] = (MQTT_LIGHT_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX);
 
-
     device = payload.createNestedObject("device");
-
     device["name"] = DEVICE_NAME;
     device["model"] = DEVICE_MODEL;
     device["sw_version"] = SOFTWARE_VERSION;
@@ -542,21 +502,18 @@ void mqttHomeAssistantDiscovery()
     serializeJson(payload, strPayload);
 
     mqttPubSub.publish(discoveryTopic.c_str(), strPayload.c_str());
-
-    ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-    // WATER_PUMP
-    ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     
+  //////////////////
+ // WATER_PUMP ////
+//////////////////
     delay(500);
-
-
+    
     payload.clear();
     device.clear();
     identifiers.clear();
     strPayload.clear();
 
     discoveryTopic = MQTT_WATER_PUMP_TOPIC + MQTT_TOPIC_DISCOVERY_SUFFIX;
-
     
     payload["name"] = DEVICE_NAME + WATER_PUMP_NAME;
     payload["unique_id"] = UNIQUE_ID + WATER_PUMP_NAME;
@@ -565,7 +522,6 @@ void mqttHomeAssistantDiscovery()
     payload["device_class"] = "switch";
 
     device = payload.createNestedObject("device");
-
     device["name"] = DEVICE_NAME;
     device["model"] = DEVICE_MODEL;
     device["sw_version"] = SOFTWARE_VERSION;
@@ -579,12 +535,10 @@ void mqttHomeAssistantDiscovery()
 
     mqttPubSub.publish(discoveryTopic.c_str(), strPayload.c_str());
 
-    ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-    // AIR_PUMP
-    ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-    
+  ////////////////
+ // AIR_PUMP ////
+////////////////
     delay(500);
-
 
     payload.clear();
     device.clear();
@@ -592,8 +546,6 @@ void mqttHomeAssistantDiscovery()
     strPayload.clear();
 
     discoveryTopic = MQTT_AIR_PUMP_TOPIC + MQTT_TOPIC_DISCOVERY_SUFFIX;
-
-    
     payload["name"] = DEVICE_NAME + AIR_PUMP_NAME;
     payload["unique_id"] = UNIQUE_ID + AIR_PUMP_NAME;
     payload["state_topic"] = (MQTT_WATER_PUMP_TOPIC + (MQTT_AIR_PUMP_TOPIC + MQTT_TOPIC_STATE_SUFFIX));
@@ -615,12 +567,10 @@ void mqttHomeAssistantDiscovery()
 
     mqttPubSub.publish(discoveryTopic.c_str(), strPayload.c_str());
 
-    ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-    // TEMPERATURE
-    ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
+  ///////////////////
+ // TEMPERATURE ////
+///////////////////
     delay(500);
-
 
     payload.clear();
     device.clear();
@@ -632,15 +582,12 @@ void mqttHomeAssistantDiscovery()
     payload["name"] = DEVICE_NAME + TEMPERATURE_NAME;
     payload["unique_id"] = UNIQUE_ID + TEMPERATURE_NAME;
     payload["state_topic"] = MQTT_THERMOMETER_TOPIC_STATE;
-
     payload["value_template"] = "{{ value_json.temperature | is_defined}}";
     payload["device_class"] = "temperature";
     payload["unit_of_measurement"] = "°C";
     payload["suggested_display_precision"] = 1;
 
-
     device = payload.createNestedObject("device");
-
     device["name"] = DEVICE_NAME;
     device["model"] = DEVICE_MODEL;
     device["sw_version"] = SOFTWARE_VERSION;
@@ -654,10 +601,9 @@ void mqttHomeAssistantDiscovery()
 
     mqttPubSub.publish(discoveryTopic.c_str(), strPayload.c_str());
 
-    ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-    // HUMIDITY
-    ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
+  ////////////////
+ // HUMIDITY ////
+////////////////
     delay(500);
 
     payload.clear();
@@ -666,7 +612,6 @@ void mqttHomeAssistantDiscovery()
     strPayload.clear();
 
     discoveryTopic = MQTT_HUMIDITY_TOPIC + MQTT_TOPIC_DISCOVERY_SUFFIX;
-    
     payload["name"] = DEVICE_NAME + HUMIDITY_NAME;
     payload["unique_id"] = UNIQUE_ID + HUMIDITY_NAME;
     payload["state_topic"] = MQTT_THERMOMETER_TOPIC_STATE;
@@ -674,9 +619,6 @@ void mqttHomeAssistantDiscovery()
     payload["value_template"] = "{{ value_json.humidity | is_defined }}";
     payload["device_class"] = "humidity";
     payload["unit_of_measurement"] = "%";
-    
-
-
     device = payload.createNestedObject("device");
 
     device["name"] = DEVICE_NAME;
@@ -692,10 +634,9 @@ void mqttHomeAssistantDiscovery()
 
     mqttPubSub.publish(discoveryTopic.c_str(), strPayload.c_str());
 
-    ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-    // TDS
-    ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
+  ///////////
+ // TDS ////
+///////////
     delay(500);
 
     payload.clear();
@@ -708,7 +649,6 @@ void mqttHomeAssistantDiscovery()
     payload["name"] = DEVICE_NAME + TDS_NAME;
     payload["unique_id"] = UNIQUE_ID + TDS_NAME;
     payload["state_topic"] = MQTT_WATER_QUALITY_TOPIC_STATE;
-
     payload["value_template"] = "{{ value_json.tds | is_defined }}";
     payload["unit_of_measurement"] = "ppm";
     payload["suggested_display_precision"] = 1;
@@ -728,10 +668,9 @@ void mqttHomeAssistantDiscovery()
 
     mqttPubSub.publish(discoveryTopic.c_str(), strPayload.c_str());
 
-    ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-    // FLOAT_SENSOR
-    ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
+  //////////
+ // PH ////
+//////////
     delay(500);
 
     payload.clear();
@@ -739,13 +678,14 @@ void mqttHomeAssistantDiscovery()
     identifiers.clear();
     strPayload.clear();
 
-    discoveryTopic = MQTT_FLOAT_SENSOR_TOPIC + MQTT_TOPIC_DISCOVERY_SUFFIX;
+    discoveryTopic = MQTT_PH_TOPIC + MQTT_TOPIC_DISCOVERY_SUFFIX;
     
-    payload["name"] = DEVICE_NAME + FLOAT_SENSOR_NAME;
-    payload["unique_id"] = UNIQUE_ID + FLOAT_SENSOR_NAME;
-    payload["state_topic"] = (MQTT_FLOAT_SENSOR_TOPIC + MQTT_TOPIC_STATE_SUFFIX);
-
-
+    payload["name"] = DEVICE_NAME + PH_NAME;
+    payload["unique_id"] = UNIQUE_ID + PH_NAME;
+    payload["state_topic"] = MQTT_WATER_QUALITY_TOPIC_STATE;
+    payload["value_template"] = "{{ value_json.ph | is_defined }}";
+    payload["unit_of_measurement"] = "ph";
+    payload["suggested_display_precision"] = 1;
 
     device = payload.createNestedObject("device");
 
@@ -762,12 +702,40 @@ void mqttHomeAssistantDiscovery()
 
     mqttPubSub.publish(discoveryTopic.c_str(), strPayload.c_str());
 
-    ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-    // SECURITY SWITCH
-    ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-    
+  ////////////////////
+ // FLOAT SENSOR ////
+////////////////////
     delay(500);
 
+    payload.clear();
+    device.clear();
+    identifiers.clear();
+    strPayload.clear();
+
+    discoveryTopic = MQTT_FLOAT_SENSOR_TOPIC + MQTT_TOPIC_DISCOVERY_SUFFIX;
+    
+    payload["name"] = DEVICE_NAME + FLOAT_SENSOR_NAME;
+    payload["unique_id"] = UNIQUE_ID + FLOAT_SENSOR_NAME;
+    payload["state_topic"] = (MQTT_FLOAT_SENSOR_TOPIC + MQTT_TOPIC_STATE_SUFFIX);
+
+    device = payload.createNestedObject("device");
+    device["name"] = DEVICE_NAME;
+    device["model"] = DEVICE_MODEL;
+    device["sw_version"] = SOFTWARE_VERSION;
+    device["manufacturer"] = MANUFACTURER;
+    identifiers = device.createNestedArray("identifiers");
+    identifiers.add(UNIQUE_ID);
+
+    serializeJsonPretty(payload, Serial);
+    Serial.println(" ");
+    serializeJson(payload, strPayload);
+
+    mqttPubSub.publish(discoveryTopic.c_str(), strPayload.c_str());
+
+  ///////////////////////
+ // SECURITY SWITCH ////
+///////////////////////
+    delay(500);
 
     payload.clear();
     device.clear();
@@ -776,7 +744,6 @@ void mqttHomeAssistantDiscovery()
 
     discoveryTopic = MQTT_SECURITY_SWITCH_TOPIC + MQTT_TOPIC_DISCOVERY_SUFFIX;
 
-    
     payload["name"] = DEVICE_NAME + SECURITY_SWITCH_NAME;
     payload["unique_id"] = UNIQUE_ID + SECURITY_SWITCH_NAME;
     payload["state_topic"] = (MQTT_SECURITY_SWITCH_TOPIC + MQTT_TOPIC_STATE_SUFFIX);
@@ -797,10 +764,10 @@ void mqttHomeAssistantDiscovery()
     serializeJson(payload, strPayload);
 
     mqttPubSub.publish(discoveryTopic.c_str(), strPayload.c_str());
-
   }
 }
 
+//Take command from serial and check if valid, used for testing
 void commandExecutor(char command){
   switch (command) {
     case 'd':
@@ -832,115 +799,118 @@ void commandExecutor(char command){
 }
 
 
+//read the message from subscribed topic and do the logic
 void mqttReceiverCallback(char* topic, byte* payload, unsigned int length) 
 {
+  Serial.print("Message arrived on topic: ");
+  Serial.print(topic);
+  Serial.print(". Message: ");
 
-    Serial.print("Message arrived on topic: ");
-    Serial.print(topic);
-    Serial.print(". Message: ");
+  byte state = 0;
 
-    byte state = 0;
+  String message;
 
-    String message;
+  StaticJsonDocument<600> json;
+  
+  for (int i = 0; i < length; i++) 
+  {
+      Serial.print((char)payload[i]);
+      message += (char)payload[i];
+  }
+  Serial.println();
 
-    StaticJsonDocument<600> json;
+  //SERRA OPTION FROM MQTT
+  if(String(topic) == String(MQTT_TOPIC_OPTION)) 
+  {
+    int temp;     //use temp because if the value is not in the json
+                  //temp var become 0 and not the real var
+
+    deserializeJson(json, payload);
+
+    //DATA PERIOD
+    temp = json["sendDataPeriod"];
+    if(temp < 5000)
+      temp = PERIOD_SECOND_5;
+    if(temp == 0)
+      temp = sendDataPeriod;
+    sendDataPeriod = temp;
+    Serial.print("sendDataPeriod: ");
+    Serial.println(sendDataPeriod);
+
+    //POLLING PERIOD
+    temp = json["pollingDataPeriod"];
+    if(temp < 3000)
+      temp = 3000;
+    if(temp == 0)
+      temp = pollingDataPeriod;
+    pollingDataPeriod = temp;
+    Serial.print("pollingDataPeriod: ");
+    Serial.println(pollingDataPeriod);
+
+    pumpSecurity = json["pumpSecurity"];
     
-    for (int i = 0; i < length; i++) 
-    {
-        Serial.print((char)payload[i]);
-        message += (char)payload[i];
-    }
-    Serial.println();
+    if(pumpSecurity)
+      Serial.println("PUMP SECURITY REMOVED");
+    else
+      Serial.println("PUMP SECURITY ENABLED");
 
-    //SERRA OPTION FROM MQTT
-    if(String(topic) == String(MQTT_TOPIC_OPTION)) 
-    {
-      int temp; //use temp because if the value is not in the json
-      //the temp var become 0 and not the real var
-
-      deserializeJson(json, payload);
-
-      //DATA PERIOD
-      temp = json["sendDataPeriod"];
-      if(temp < 5000)
-        temp = PERIOD_SECOND_5;
-      if(temp == 0)
-        temp = sendDataPeriod;
-      sendDataPeriod = temp;
-      Serial.print("sendDataPeriod: ");
-      Serial.println(sendDataPeriod);
-
-      //POLLING PERIOD
-      temp = json["pollingDataPeriod"];
-      if(temp < 3000)
-        temp = 3000;
-      if(temp == 0)
-        temp = pollingDataPeriod;
-      pollingDataPeriod = temp;
-      Serial.print("pollingDataPeriod: ");
-      Serial.println(pollingDataPeriod);
-
-      //BYPASS SECURITY //TODO VERIFICARE SE BYPASSPUMPSECURITY è NULL
-      bypassPumpSecurity = json["bypassPumpSecurity"];
-      
-      if(bypassPumpSecurity)
-        Serial.println("PUMP SECURITY REMOVED");
-      else
-        Serial.println("PUMP SECURITY ENABLED");
+    //refreshing states when finished
+    mqttStates();
+  }
 
 
-        mqttStates();
-    }
+  //SERRA COMMAND FROM MQTT
+  if(String(topic) == String(MQTT_TOPIC_COMMAND)){
+    Serial.println((char)payload[0]);
+    commandExecutor((char)payload[0]);
+  }
 
-
-    //SERRA COMMAND FROM MQTT
-    if(String(topic) == String(MQTT_TOPIC_COMMAND)){
-      Serial.println((char)payload[0]);
-      commandExecutor((char)payload[0]);
-    }
-
-    if(String(topic) == String((MQTT_LIGHT_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX))) 
-    {
-      if(message == "ON")
-        lightLogic(true);
-      else
-        lightLogic(false);
-      
-      mqttStates();
-    }
-
-    if(String(topic) == String((MQTT_WATER_PUMP_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX))) 
-    {
-      //if there is water or bypass is true
-      if(floatSensorState || bypassPumpSecurity){
-        if(message == "ON")
-          waterPumpLogic(true);
-        else
-          waterPumpLogic(false);
-      }
-      mqttStates();
-    }
-
-    if(String(topic) == String((MQTT_AIR_PUMP_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX))) 
-    {
-      if(message == "ON")
-        airPumpLogic(true);
-      else
-        airPumpLogic(false);
-      
-      mqttStates();
-    }
-
-    //HOME ASSISTANT STATUS
-    if(String(topic) == String(MQTT_TOPIC_HA_STATUS)) 
-    {
-      if(message == "online")
-          mqttHomeAssistantDiscovery();
-    }
+  //LIGHT COMMAND
+  if(String(topic) == String((MQTT_LIGHT_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX))) 
+  {
+    if(message == "ON")
+      lightLogic(true);
+    else
+      lightLogic(false);
     
+    mqttStates();
+  }
 
+  //WATER PUMP COMMAND
+  if(String(topic) == String((MQTT_WATER_PUMP_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX))) 
+  {
+    //if there is water or bypass is true
+    if(floatSensorState || pumpSecurity){
+      if(message == "ON")
+        waterPumpLogic(true);
+      else
+        waterPumpLogic(false);
+    }
+    mqttStates();
+  }
+
+  //AIR PUMP COMMAND
+  if(String(topic) == String((MQTT_AIR_PUMP_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX))) 
+  {
+    if(message == "ON")
+      airPumpLogic(true);
+    else
+      airPumpLogic(false);
+    
+    mqttStates();
+  }
+
+  //HOME ASSISTANT STATUS
+  if(String(topic) == String(MQTT_TOPIC_HA_STATUS)) 
+  {
+    //when homeassistant turn on send "online" message to MQTT
+    //then send discovery to ensure if system is resetted hassio
+    //know sensor again
+    if(message == "online")
+      mqttHomeAssistantDiscovery();
+  }
 }
-
+//@param logicState set the state of light to this
 void lightLogic(bool logicState){
   lightState = logicState;
   if(lightState){
@@ -951,6 +921,7 @@ void lightLogic(bool logicState){
   }
 }
 
+//@param logicState set the state off water pump to this
 void waterPumpLogic(bool logicState){
   waterPumpState = logicState;
   if(waterPumpState){
@@ -962,6 +933,7 @@ void waterPumpLogic(bool logicState){
 
 }
 
+//@param logicState set the state of air pump to this
 void airPumpLogic(bool logicState){
   airPumpState = logicState;
   if(airPumpState){
@@ -973,10 +945,11 @@ void airPumpLogic(bool logicState){
 
 }
 
+//change sensor state depending on the value
 void floatSensorLogic(){
   floatSensorState = digitalRead(FLOAT_SENSOR);
   //if the water level is fine and the bypass is not active the pump will be turned on automatically
-  if(!bypassPumpSecurity){
+  if(!pumpSecurity){
     if(!floatSensorState)
       waterPumpState = false;
     else
@@ -984,20 +957,25 @@ void floatSensorLogic(){
   }
 }
 
+//not using official library because cannot read humidity with that
 void am2320Logic(){
   if (am2320.update() != 0) {
     Serial.println("Error: Cannot update sensor values.");
   }else{
-    temperature = am2320.temperatureC;
+    //my sensor is a mess, the temperature is 2 degree higher
+    temperature = am2320.temperatureC - temperatureOffset;
     humidity = am2320.humidity;
   }
 }
 
+//TODO not sure is nedded
+//median algorith for better measurement
 void tdsLogic(){
+  float waterTemperature = 20;
   //MEDIAN ALGORITHM
   int bTab[SCOUNT];
   for (byte i = 0; i<SCOUNT; i++)
-  bTab[i] = analogBufferTemp[i];
+  bTab[i] = tdsAnalogBufferTemp[i];
   int i, j, bTemp;
   for (j = 0; j < SCOUNT - 1; j++) {
     for (i = 0; i < SCOUNT - j - 1; i++) {
@@ -1015,31 +993,63 @@ void tdsLogic(){
     bTemp = (bTab[SCOUNT / 2] + bTab[SCOUNT / 2 - 1]) / 2;
   }
 
-  // TDS READING
-  float tdsValue;
-  //float phValue;
-
   //TDS CALCS
-  for(copyIndex=0; copyIndex<SCOUNT; copyIndex++){
-    analogBufferTemp[copyIndex] = analogBuffer[copyIndex];
-    
+  for(int copyIndex=0; copyIndex<SCOUNT; copyIndex++){
+    tdsAnalogBufferTemp[copyIndex] = tdsAnalogBuffer[copyIndex];
     // read the analog value more stable by the median filtering algorithm, and convert to voltage value
-    averageVoltage = bTemp * (float)VREF / 4096.0;     //TO FIT WITH ESP32 (12 BIT analogRead resolution) == 4096
-    
+    float averageVoltage = bTemp * (float)VREF / analogResolution;
     //temperature compensation formula: fFinalResult(25^C) = fFinalResult(current)/(1.0+0.02*(fTP-25.0)); 
     float compensationCoefficient = 1.0+0.02*(waterTemperature-25.0);
     //temperature compensation
     float compensationVoltage = averageVoltage / compensationCoefficient;
-    
     //convert voltage value to tds value
+    //TODO look for this MAGIC NUMBERS
     tds = (133.42 * compensationVoltage * compensationVoltage * compensationVoltage - 255.86 * compensationVoltage*  compensationVoltage + 857.39 * compensationVoltage) * 0.5;
   }
-  //mqttStates();   //TODO CHECK
 }
+
+//TODO not sure is nedded
+
+//median algorith for better measurement
+void phLogic(){
+  float calibration_value = 21.34;
+  //MEDIAN ALGORITHM
+  int bTab[SCOUNT];
+  for (byte i = 0; i<SCOUNT; i++)
+  bTab[i] = phAnalogBufferTemp[i];
+  int i, j, bTemp;
+  for (j = 0; j < SCOUNT - 1; j++) {
+    for (i = 0; i < SCOUNT - j - 1; i++) {
+      if (bTab[i] > bTab[i + 1]) {
+        bTemp = bTab[i];
+        bTab[i] = bTab[i + 1];
+        bTab[i + 1] = bTemp;
+      }
+    }
+  }
+  if ((SCOUNT & 1) > 0){
+    bTemp = bTab[(SCOUNT - 1) / 2];
+  }
+  else {
+    bTemp = (bTab[SCOUNT / 2] + bTab[SCOUNT / 2 - 1]) / 2;
+  }
+  //PH CALCS
+  for(int copyIndex=0; copyIndex<SCOUNT; copyIndex++){
+    phAnalogBufferTemp[copyIndex] = phAnalogBuffer[copyIndex];
+
+        //TODO look for this MAGIC NUMBERS
+    float averageVoltage = bTemp * VREF / analogResolution / 6;     
+
+    ph = -5.70 * averageVoltage + calibration_value;
+  }
+}
+
 
 //check the states and send to MQTT server
 void mqttStates(){
+  Serial.println("MQTT: Sending Data");
   
+  //If the server is slow put small delay between messages
   mqttPubSub.publish((MQTT_LIGHT_TOPIC + MQTT_TOPIC_STATE_SUFFIX).c_str(), (lightState ? "ON" : "OFF"));
   //delay(10);
   mqttPubSub.publish((MQTT_FLOAT_SENSOR_TOPIC + MQTT_TOPIC_STATE_SUFFIX).c_str(), (floatSensorState ? "ON" : "OFF"));
@@ -1048,26 +1058,27 @@ void mqttStates(){
   //delay(10);
   mqttPubSub.publish((MQTT_WATER_PUMP_TOPIC + (MQTT_AIR_PUMP_TOPIC + MQTT_TOPIC_STATE_SUFFIX)).c_str(), (airPumpState ? "ON" : "OFF"));
   //delay(10);
-  mqttPubSub.publish((MQTT_SECURITY_SWITCH_TOPIC + MQTT_TOPIC_STATE_SUFFIX).c_str(), (bypassPumpSecurity ? "ON" : "OFF"));
-  
-  //am2320
+  mqttPubSub.publish((MQTT_SECURITY_SWITCH_TOPIC + MQTT_TOPIC_STATE_SUFFIX).c_str(), (pumpSecurity ? "ON" : "OFF"));
+
+  //////////////
+ // AM2320 ////
+//////////////
   StaticJsonDocument<200> payload;
   String strPayload;
     
-  payload["temperature"] = am2320.temperatureC;
+  payload["temperature"] = am2320.temperatureC - temperatureOffset;
   payload["humidity"] = am2320.humidity;
-
-  
   serializeJson(payload, strPayload);
   mqttPubSub.publish(MQTT_THERMOMETER_TOPIC_STATE.c_str(), strPayload.c_str());
-
-  //TDS
+  ////////////////
+ // TDS & ph ////
+////////////////
   payload.clear();
   strPayload.clear();
   
   payload["tds"] = tds; //ppm
   //payload["ec"] = (tds * 2)/1000; //µS/cm
-  //payload["ph"] = tds;
+  payload["ph"] = ph;
   serializeJson(payload, strPayload);
   mqttPubSub.publish(MQTT_WATER_QUALITY_TOPIC_STATE.c_str(), strPayload.c_str());
 }
