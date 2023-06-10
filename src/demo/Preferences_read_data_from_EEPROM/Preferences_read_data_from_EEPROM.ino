@@ -23,6 +23,7 @@ void setup() {
     Serial.printf("ssid: %s\n", ssid);
     Serial.printf("password: %s\n", password);
   }
+  preferences.end();
 }
 
 void loop() {
