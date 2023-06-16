@@ -669,7 +669,6 @@ void mqttHomeAssistantDiscovery()
     delay(500);
 
     payload.clear();
-    device.clear();
     identifiers.clear();
     strPayload.clear();
 
