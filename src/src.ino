@@ -1,3 +1,5 @@
+//TODO CHECK WHEN MQTT IS OFFLINE
+
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
 /*------------------------------------Include Files----------------------------------------------------------------------------------------------*/
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
@@ -22,6 +24,10 @@
 #define PERIOD_HOUR_1           3600000
 
 
+#define RELAY_ON                LOW
+#define RELAY_OFF               HIGH
+
+
 
 
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
@@ -29,10 +35,12 @@
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
 const byte                LIGHT = 32;
 const byte                WATER_PUMP = 33;
-const byte                TDS = 34;
-const byte                PH = 35;
+const byte                TDS = 35;
+const byte                PH = 34;
 const byte                AIR_PUMP = 19;
 const byte                FLOAT_SENSOR = 17;
+const byte                FAN = 16;
+const byte                GENERAL_BUTTON = 5;
 
 const String              LIGHT_NAME = "_light";
 const String              WATER_PUMP_NAME = "_waterpump";
@@ -42,6 +50,7 @@ const String              HUMIDITY_NAME = "_humidity";
 const String              TDS_NAME = "_tds";
 const String              PH_NAME = "_ph";
 const String              FLOAT_SENSOR_NAME = "_floatsensor";
+const String              FAN_NAME = "_fan";
 const String              SECURITY_SWITCH_NAME = "_securityswitch";
  
 
@@ -79,6 +88,8 @@ const String        MQTT_LIGHT_TOPIC =  MQTT_TOPIC_HA_PREFIX + "light/" + MQTT_T
 const String        MQTT_WATER_PUMP_TOPIC =  MQTT_TOPIC_HA_PREFIX + "switch/" + MQTT_TOPIC_STATUS + WATER_PUMP_NAME;
 // AIR PUMP
 const String        MQTT_AIR_PUMP_TOPIC =  MQTT_TOPIC_HA_PREFIX + "switch/" + MQTT_TOPIC_STATUS + AIR_PUMP_NAME;
+// FAN
+const String        MQTT_FAN_TOPIC =  MQTT_TOPIC_HA_PREFIX + "switch/" + MQTT_TOPIC_STATUS + FAN_NAME;
 // THERMOMETER
 const String        MQTT_TEMPERATURE_TOPIC =  MQTT_TOPIC_HA_PREFIX + "sensor/" + MQTT_TOPIC_STATUS + TEMPERATURE_NAME;
 const String        MQTT_HUMIDITY_TOPIC =  MQTT_TOPIC_HA_PREFIX + "sensor/" + MQTT_TOPIC_STATUS + HUMIDITY_NAME;
@@ -94,14 +105,15 @@ const String        MQTT_SECURITY_SWITCH_TOPIC =  MQTT_TOPIC_HA_PREFIX + "switch
 
 
 
-const int           topicsNumber = 6;
+const int           topicsNumber = 7;
 const String        topics[topicsNumber] = {
                                             MQTT_TOPIC_HA_STATUS, 
                                             MQTT_TOPIC_OPTION, 
                                             MQTT_TOPIC_COMMAND, 
                                             (MQTT_LIGHT_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX), 
                                             (MQTT_WATER_PUMP_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX),
-                                            (MQTT_AIR_PUMP_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX)
+                                            (MQTT_AIR_PUMP_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX),
+                                            (MQTT_FAN_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX)
 
                                            };
 
@@ -131,7 +143,6 @@ unsigned long       lightPreviousMillis = 0;
 unsigned long       samplePreviousMillis = 0;
 unsigned long       mqttLoopPreviousMillis = 0;
 
-
 unsigned long       currentMillis;
 
 unsigned int        lightONPeriod = PERIOD_HOUR_1*12;
@@ -145,6 +156,7 @@ bool                lightState = true;
 bool                waterPumpState = true;
 bool                airPumpState = true;
 bool                floatSensorState = true;
+bool                fanState = false;
 
 float               temperatureOffset = 2;
 float               temperature;
@@ -197,9 +209,12 @@ void setup()
   pinMode(LIGHT, OUTPUT);
   pinMode(WATER_PUMP, OUTPUT);
   pinMode(AIR_PUMP, OUTPUT);
+  pinMode(FAN, OUTPUT);
+
   pinMode(TDS, INPUT);
   pinMode(PH, INPUT);
 
+  pinMode(GENERAL_BUTTON, INPUT_PULLDOWN);
 
   pinMode(FLOAT_SENSOR, INPUT_PULLUP);
   attachInterrupt(FLOAT_SENSOR, floatSensorISR, FALLING);
@@ -210,13 +225,7 @@ void setup()
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
 /*------------------------------------LOGIC------------------------------------------------------------------------------------------------------*/
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
-  lightLogic(lightState);
-  floatSensorLogic();
-  waterPumpLogic(waterPumpState);
-  airPumpLogic(airPumpState);
-  am2320Logic();
-  tdsLogic();
-  phLogic();
+  logics();
 
 
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
@@ -291,13 +300,7 @@ void loop()
   
   if(currentMillis - pollingPreviousMillis > pollingDataPeriod)       //sensor polling is splitted from INTERENET activities
   {
-    lightLogic(lightState);
-    floatSensorLogic();
-    waterPumpLogic(waterPumpState);
-    airPumpLogic(airPumpState);
-    am2320Logic();
-    tdsLogic();
-    phLogic();
+    logics();
 
     pollingPreviousMillis = currentMillis;
   }
@@ -548,12 +551,42 @@ void mqttHomeAssistantDiscovery()
     discoveryTopic = MQTT_AIR_PUMP_TOPIC + MQTT_TOPIC_DISCOVERY_SUFFIX;
     payload["name"] = DEVICE_NAME + AIR_PUMP_NAME;
     payload["unique_id"] = UNIQUE_ID + AIR_PUMP_NAME;
-    payload["state_topic"] = (MQTT_WATER_PUMP_TOPIC + (MQTT_AIR_PUMP_TOPIC + MQTT_TOPIC_STATE_SUFFIX));
+    payload["state_topic"] = (MQTT_AIR_PUMP_TOPIC + MQTT_TOPIC_STATE_SUFFIX);
     payload["command_topic"] = (MQTT_AIR_PUMP_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX);
     payload["device_class"] = "switch";
 
     device = payload.createNestedObject("device");
+    device["name"] = DEVICE_NAME;
+    device["model"] = DEVICE_MODEL;
+    device["sw_version"] = SOFTWARE_VERSION;
+    device["manufacturer"] = MANUFACTURER;
+    identifiers = device.createNestedArray("identifiers");
+    identifiers.add(UNIQUE_ID);
 
+    serializeJsonPretty(payload, Serial);
+    Serial.println(" ");
+    serializeJson(payload, strPayload);
+
+    mqttPubSub.publish(discoveryTopic.c_str(), strPayload.c_str());
+
+  ///////////
+ // FAN ////
+///////////
+    delay(500);
+
+    payload.clear();
+    device.clear();
+    identifiers.clear();
+    strPayload.clear();
+
+    discoveryTopic = MQTT_FAN_TOPIC + MQTT_TOPIC_DISCOVERY_SUFFIX;
+    payload["name"] = DEVICE_NAME + FAN_NAME;
+    payload["unique_id"] = UNIQUE_ID + FAN_NAME;
+    payload["state_topic"] = (MQTT_FAN_TOPIC + MQTT_TOPIC_STATE_SUFFIX);
+    payload["command_topic"] = (MQTT_FAN_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX);
+    payload["device_class"] = "switch";
+
+    device = payload.createNestedObject("device");
     device["name"] = DEVICE_NAME;
     device["model"] = DEVICE_MODEL;
     device["sw_version"] = SOFTWARE_VERSION;
@@ -619,8 +652,8 @@ void mqttHomeAssistantDiscovery()
     payload["value_template"] = "{{ value_json.humidity | is_defined }}";
     payload["device_class"] = "humidity";
     payload["unit_of_measurement"] = "%";
-    device = payload.createNestedObject("device");
 
+    device = payload.createNestedObject("device");
     device["name"] = DEVICE_NAME;
     device["model"] = DEVICE_MODEL;
     device["sw_version"] = SOFTWARE_VERSION;
@@ -654,7 +687,6 @@ void mqttHomeAssistantDiscovery()
     payload["suggested_display_precision"] = 1;
 
     device = payload.createNestedObject("device");
-
     device["name"] = DEVICE_NAME;
     device["model"] = DEVICE_MODEL;
     device["sw_version"] = SOFTWARE_VERSION;
@@ -688,7 +720,6 @@ void mqttHomeAssistantDiscovery()
     payload["suggested_display_precision"] = 1;
 
     device = payload.createNestedObject("device");
-
     device["name"] = DEVICE_NAME;
     device["model"] = DEVICE_MODEL;
     device["sw_version"] = SOFTWARE_VERSION;
@@ -751,7 +782,6 @@ void mqttHomeAssistantDiscovery()
     payload["device_class"] = "switch";
 
     device = payload.createNestedObject("device");
-
     device["name"] = DEVICE_NAME;
     device["model"] = DEVICE_MODEL;
     device["sw_version"] = SOFTWARE_VERSION;
@@ -879,7 +909,7 @@ void mqttReceiverCallback(char* topic, byte* payload, unsigned int length)
   //WATER PUMP COMMAND
   if(String(topic) == String((MQTT_WATER_PUMP_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX))) 
   {
-    //if there is water or bypass is true
+    //if there is water or security is true
     if(floatSensorState || pumpSecurity){
       if(message == "ON")
         waterPumpLogic(true);
@@ -899,6 +929,17 @@ void mqttReceiverCallback(char* topic, byte* payload, unsigned int length)
     
     mqttStates();
   }
+  
+  //FAN COMMAND
+  if(String(topic) == String((MQTT_FAN_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX))) 
+  {
+    if(message == "ON")
+      fanLogic(true);
+    else
+      fanLogic(false);
+    
+    mqttStates();
+  }
 
   //HOME ASSISTANT STATUS
   if(String(topic) == String(MQTT_TOPIC_HA_STATUS)) 
@@ -914,10 +955,10 @@ void mqttReceiverCallback(char* topic, byte* payload, unsigned int length)
 void lightLogic(bool logicState){
   lightState = logicState;
   if(lightState){
-    digitalWrite(LIGHT, HIGH);
+    digitalWrite(LIGHT, RELAY_ON);
   }
   else{
-    digitalWrite(LIGHT, LOW);
+    digitalWrite(LIGHT, RELAY_OFF);
   }
 }
 
@@ -925,10 +966,10 @@ void lightLogic(bool logicState){
 void waterPumpLogic(bool logicState){
   waterPumpState = logicState;
   if(waterPumpState){
-    digitalWrite(WATER_PUMP, HIGH);
+    digitalWrite(WATER_PUMP, RELAY_ON);
   }
   else{
-    digitalWrite(WATER_PUMP, LOW);
+    digitalWrite(WATER_PUMP, RELAY_OFF);
   }
 
 }
@@ -937,10 +978,22 @@ void waterPumpLogic(bool logicState){
 void airPumpLogic(bool logicState){
   airPumpState = logicState;
   if(airPumpState){
-    digitalWrite(AIR_PUMP, HIGH);
+    digitalWrite(AIR_PUMP, RELAY_ON);
   }
   else{
-    digitalWrite(AIR_PUMP, LOW);
+    digitalWrite(AIR_PUMP, RELAY_OFF);
+  }
+
+}
+
+//@param logicState set the state of fan to this
+void fanLogic(bool logicState){
+  fanState = logicState;
+  if(fanState){
+    digitalWrite(FAN, RELAY_ON);
+  }
+  else{
+    digitalWrite(FAN, RELAY_OFF);
   }
 
 }
@@ -948,12 +1001,9 @@ void airPumpLogic(bool logicState){
 //change sensor state depending on the value
 void floatSensorLogic(){
   floatSensorState = digitalRead(FLOAT_SENSOR);
-  //if the water level is fine and the bypass is not active the pump will be turned on automatically
   if(!pumpSecurity){
     if(!floatSensorState)
       waterPumpState = false;
-    else
-      waterPumpState = true;
   }
 }
 
@@ -1056,7 +1106,9 @@ void mqttStates(){
   //delay(10);
   mqttPubSub.publish((MQTT_WATER_PUMP_TOPIC + MQTT_TOPIC_STATE_SUFFIX).c_str(), (waterPumpState ? "ON" : "OFF"));
   //delay(10);
-  mqttPubSub.publish((MQTT_WATER_PUMP_TOPIC + (MQTT_AIR_PUMP_TOPIC + MQTT_TOPIC_STATE_SUFFIX)).c_str(), (airPumpState ? "ON" : "OFF"));
+  mqttPubSub.publish((MQTT_AIR_PUMP_TOPIC + MQTT_TOPIC_STATE_SUFFIX).c_str(), (airPumpState ? "ON" : "OFF"));
+    //delay(10);
+  mqttPubSub.publish((MQTT_FAN_TOPIC + MQTT_TOPIC_STATE_SUFFIX).c_str(), (fanState ? "ON" : "OFF"));
   //delay(10);
   mqttPubSub.publish((MQTT_SECURITY_SWITCH_TOPIC + MQTT_TOPIC_STATE_SUFFIX).c_str(), (pumpSecurity ? "ON" : "OFF"));
 
@@ -1083,3 +1135,24 @@ void mqttStates(){
   mqttPubSub.publish(MQTT_WATER_QUALITY_TOPIC_STATE.c_str(), strPayload.c_str());
 }
 
+void logics(){
+  if(!digitalRead(GENERAL_BUTTON)){
+    Serial.println("General Button is OFF");
+    lightLogic(false);
+    floatSensorState = true;
+    waterPumpLogic(false);
+    airPumpLogic(false);
+    fanLogic(false);
+  }else{
+    Serial.println("General Button is ON");
+    lightLogic(lightState);
+    floatSensorLogic();
+    waterPumpLogic(waterPumpState);
+    airPumpLogic(airPumpState);
+    fanLogic(fanState);
+    am2320Logic();
+    tdsLogic();
+    phLogic();
+  }
+  
+}
