@@ -475,13 +475,18 @@ void mqttHomeAssistantDiscovery()
     JsonObject device;
     JsonArray identifiers;
     
+    device = payload.createNestedObject("device");
+    device["name"] = DEVICE_NAME;
+    device["model"] = DEVICE_MODEL;
+    device["sw_version"] = SOFTWARE_VERSION;
+    device["manufacturer"] = MANUFACTURER;
+
   /////////////
  // LIGHT ////
 /////////////
     delay(500);
     
     payload.clear();
-    device.clear();
     identifiers.clear();
     strPayload.clear();
 
@@ -492,11 +497,6 @@ void mqttHomeAssistantDiscovery()
     payload["state_topic"] = (MQTT_LIGHT_TOPIC + MQTT_TOPIC_STATE_SUFFIX);
     payload["command_topic"] = (MQTT_LIGHT_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX);
 
-    device = payload.createNestedObject("device");
-    device["name"] = DEVICE_NAME;
-    device["model"] = DEVICE_MODEL;
-    device["sw_version"] = SOFTWARE_VERSION;
-    device["manufacturer"] = MANUFACTURER;
     identifiers = device.createNestedArray("identifiers");
     identifiers.add(UNIQUE_ID);
 
@@ -512,7 +512,6 @@ void mqttHomeAssistantDiscovery()
     delay(500);
     
     payload.clear();
-    device.clear();
     identifiers.clear();
     strPayload.clear();
 
@@ -524,11 +523,6 @@ void mqttHomeAssistantDiscovery()
     payload["command_topic"] = (MQTT_WATER_PUMP_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX);
     payload["device_class"] = "switch";
 
-    device = payload.createNestedObject("device");
-    device["name"] = DEVICE_NAME;
-    device["model"] = DEVICE_MODEL;
-    device["sw_version"] = SOFTWARE_VERSION;
-    device["manufacturer"] = MANUFACTURER;
     identifiers = device.createNestedArray("identifiers");
     identifiers.add(UNIQUE_ID);
 
@@ -544,7 +538,6 @@ void mqttHomeAssistantDiscovery()
     delay(500);
 
     payload.clear();
-    device.clear();
     identifiers.clear();
     strPayload.clear();
 
@@ -555,11 +548,6 @@ void mqttHomeAssistantDiscovery()
     payload["command_topic"] = (MQTT_AIR_PUMP_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX);
     payload["device_class"] = "switch";
 
-    device = payload.createNestedObject("device");
-    device["name"] = DEVICE_NAME;
-    device["model"] = DEVICE_MODEL;
-    device["sw_version"] = SOFTWARE_VERSION;
-    device["manufacturer"] = MANUFACTURER;
     identifiers = device.createNestedArray("identifiers");
     identifiers.add(UNIQUE_ID);
 
@@ -575,7 +563,6 @@ void mqttHomeAssistantDiscovery()
     delay(500);
 
     payload.clear();
-    device.clear();
     identifiers.clear();
     strPayload.clear();
 
@@ -585,12 +572,6 @@ void mqttHomeAssistantDiscovery()
     payload["state_topic"] = (MQTT_FAN_TOPIC + MQTT_TOPIC_STATE_SUFFIX);
     payload["command_topic"] = (MQTT_FAN_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX);
     payload["device_class"] = "switch";
-
-    device = payload.createNestedObject("device");
-    device["name"] = DEVICE_NAME;
-    device["model"] = DEVICE_MODEL;
-    device["sw_version"] = SOFTWARE_VERSION;
-    device["manufacturer"] = MANUFACTURER;
     identifiers = device.createNestedArray("identifiers");
     identifiers.add(UNIQUE_ID);
 
@@ -606,7 +587,6 @@ void mqttHomeAssistantDiscovery()
     delay(500);
 
     payload.clear();
-    device.clear();
     identifiers.clear();
     strPayload.clear();
 
@@ -620,11 +600,6 @@ void mqttHomeAssistantDiscovery()
     payload["unit_of_measurement"] = "°C";
     payload["suggested_display_precision"] = 1;
 
-    device = payload.createNestedObject("device");
-    device["name"] = DEVICE_NAME;
-    device["model"] = DEVICE_MODEL;
-    device["sw_version"] = SOFTWARE_VERSION;
-    device["manufacturer"] = MANUFACTURER;
     identifiers = device.createNestedArray("identifiers");
     identifiers.add(UNIQUE_ID);
 
@@ -640,7 +615,6 @@ void mqttHomeAssistantDiscovery()
     delay(500);
 
     payload.clear();
-    device.clear();
     identifiers.clear();
     strPayload.clear();
 
@@ -653,11 +627,6 @@ void mqttHomeAssistantDiscovery()
     payload["device_class"] = "humidity";
     payload["unit_of_measurement"] = "%";
 
-    device = payload.createNestedObject("device");
-    device["name"] = DEVICE_NAME;
-    device["model"] = DEVICE_MODEL;
-    device["sw_version"] = SOFTWARE_VERSION;
-    device["manufacturer"] = MANUFACTURER;
     identifiers = device.createNestedArray("identifiers");
     identifiers.add(UNIQUE_ID);
 
@@ -673,7 +642,6 @@ void mqttHomeAssistantDiscovery()
     delay(500);
 
     payload.clear();
-    device.clear();
     identifiers.clear();
     strPayload.clear();
 
@@ -686,11 +654,6 @@ void mqttHomeAssistantDiscovery()
     payload["unit_of_measurement"] = "ppm";
     payload["suggested_display_precision"] = 1;
 
-    device = payload.createNestedObject("device");
-    device["name"] = DEVICE_NAME;
-    device["model"] = DEVICE_MODEL;
-    device["sw_version"] = SOFTWARE_VERSION;
-    device["manufacturer"] = MANUFACTURER;
     identifiers = device.createNestedArray("identifiers");
     identifiers.add(UNIQUE_ID);
 
@@ -719,11 +682,6 @@ void mqttHomeAssistantDiscovery()
     payload["unit_of_measurement"] = "ph";
     payload["suggested_display_precision"] = 1;
 
-    device = payload.createNestedObject("device");
-    device["name"] = DEVICE_NAME;
-    device["model"] = DEVICE_MODEL;
-    device["sw_version"] = SOFTWARE_VERSION;
-    device["manufacturer"] = MANUFACTURER;
     identifiers = device.createNestedArray("identifiers");
     identifiers.add(UNIQUE_ID);
 
@@ -739,7 +697,6 @@ void mqttHomeAssistantDiscovery()
     delay(500);
 
     payload.clear();
-    device.clear();
     identifiers.clear();
     strPayload.clear();
 
@@ -749,11 +706,6 @@ void mqttHomeAssistantDiscovery()
     payload["unique_id"] = UNIQUE_ID + FLOAT_SENSOR_NAME;
     payload["state_topic"] = (MQTT_FLOAT_SENSOR_TOPIC + MQTT_TOPIC_STATE_SUFFIX);
 
-    device = payload.createNestedObject("device");
-    device["name"] = DEVICE_NAME;
-    device["model"] = DEVICE_MODEL;
-    device["sw_version"] = SOFTWARE_VERSION;
-    device["manufacturer"] = MANUFACTURER;
     identifiers = device.createNestedArray("identifiers");
     identifiers.add(UNIQUE_ID);
 
@@ -769,7 +721,6 @@ void mqttHomeAssistantDiscovery()
     delay(500);
 
     payload.clear();
-    device.clear();
     identifiers.clear();
     strPayload.clear();
 
@@ -781,11 +732,6 @@ void mqttHomeAssistantDiscovery()
     payload["command_topic"] = MQTT_TOPIC_OPTION;
     payload["device_class"] = "switch";
 
-    device = payload.createNestedObject("device");
-    device["name"] = DEVICE_NAME;
-    device["model"] = DEVICE_MODEL;
-    device["sw_version"] = SOFTWARE_VERSION;
-    device["manufacturer"] = MANUFACTURER;
     identifiers = device.createNestedArray("identifiers");
     identifiers.add(UNIQUE_ID);
 
@@ -827,7 +773,6 @@ void commandExecutor(char command){
   }
 
 }
-
 
 //read the message from subscribed topic and do the logic
 void mqttReceiverCallback(char* topic, byte* payload, unsigned int length) 
