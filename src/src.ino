@@ -41,11 +41,8 @@ const byte                AIR_PUMP = 19;
 const byte                FLOAT_SENSOR = 17;
 const byte                FAN = 16;
 const byte                GENERAL_BUTTON = 5;
-<<<<<<< HEAD
 
 const byte                ONBOARD_LED = 2;
-=======
->>>>>>> f36618bf739f918d6b4c4cce1367ce7440fdcbd6
 
 const String              LIGHT_NAME = "_light";
 const String              WATER_PUMP_NAME = "_waterpump";
@@ -113,12 +110,8 @@ const String        MQTT_LIGHT_TIME_TOPIC =  MQTT_LIGHT_TOPIC + MQTT_TOPIC_OPTIO
 
 
 
-<<<<<<< HEAD
 
 const int           topicsNumber = 8;
-=======
-const int           topicsNumber = 7;
->>>>>>> f36618bf739f918d6b4c4cce1367ce7440fdcbd6
 const String        topics[topicsNumber] = {
                                             MQTT_TOPIC_HA_STATUS, 
                                             MQTT_TOPIC_OPTION, 
@@ -126,13 +119,8 @@ const String        topics[topicsNumber] = {
                                             (MQTT_LIGHT_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX), 
                                             (MQTT_WATER_PUMP_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX),
                                             (MQTT_AIR_PUMP_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX),
-<<<<<<< HEAD
                                             (MQTT_FAN_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX),
                                             MQTT_LIGHT_TIME_TOPIC
-=======
-                                            (MQTT_FAN_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX)
-
->>>>>>> f36618bf739f918d6b4c4cce1367ce7440fdcbd6
                                            };
 
 
@@ -325,11 +313,8 @@ void loop()
   if(currentMillis - pollingPreviousMillis > pollingDataPeriod)       //sensor polling is splitted from INTERENET activities
   {
     logics();
-<<<<<<< HEAD
 
     lightPeriodPassed = currentMillis - lightPreviousMillis;
-=======
->>>>>>> f36618bf739f918d6b4c4cce1367ce7440fdcbd6
 
     pollingPreviousMillis = currentMillis;
   }
@@ -599,11 +584,7 @@ void mqttHomeAssistantDiscovery()
   ///////////
  // FAN ////
 ///////////
-<<<<<<< HEAD
     delay(sendDelay);
-=======
-    delay(500);
->>>>>>> f36618bf739f918d6b4c4cce1367ce7440fdcbd6
 
     payload.clear();
     identifiers.clear();
@@ -904,11 +885,7 @@ void mqttReceiverCallback(char* topic, byte* payload, unsigned int length){
   if(String(topic) == String((MQTT_WATER_PUMP_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX))) 
   {
     //if there is water or security is true
-<<<<<<< HEAD
     if(floatSensorState || security){
-=======
-    if(floatSensorState || pumpSecurity){
->>>>>>> f36618bf739f918d6b4c4cce1367ce7440fdcbd6
       if(message == "ON")
         waterPumpLogic(true);
       else
@@ -999,11 +976,7 @@ void fanLogic(bool logicState){
 //change sensor state depending on the value
 void floatSensorLogic(){
   floatSensorState = digitalRead(FLOAT_SENSOR);
-<<<<<<< HEAD
   if(!security){
-=======
-  if(!pumpSecurity){
->>>>>>> f36618bf739f918d6b4c4cce1367ce7440fdcbd6
     if(!floatSensorState)
       waterPumpState = false;
   }
@@ -1106,18 +1079,9 @@ void mqttStates(){
   //delay(10);
   mqttPubSub.publish((MQTT_FLOAT_SENSOR_TOPIC + MQTT_TOPIC_STATE_SUFFIX).c_str(), (floatSensorState ? "ON" : "OFF"));
   mqttPubSub.publish((MQTT_WATER_PUMP_TOPIC + MQTT_TOPIC_STATE_SUFFIX).c_str(), (waterPumpState ? "ON" : "OFF"));
-<<<<<<< HEAD
   mqttPubSub.publish((MQTT_AIR_PUMP_TOPIC + MQTT_TOPIC_STATE_SUFFIX).c_str(), (airPumpState ? "ON" : "OFF"));
   mqttPubSub.publish((MQTT_FAN_TOPIC + MQTT_TOPIC_STATE_SUFFIX).c_str(), (fanState ? "ON" : "OFF"));
   mqttPubSub.publish((MQTT_SECURITY_SWITCH_TOPIC + MQTT_TOPIC_STATE_SUFFIX).c_str(), (security ? "ON" : "OFF"));
-=======
-  //delay(10);
-  mqttPubSub.publish((MQTT_AIR_PUMP_TOPIC + MQTT_TOPIC_STATE_SUFFIX).c_str(), (airPumpState ? "ON" : "OFF"));
-    //delay(10);
-  mqttPubSub.publish((MQTT_FAN_TOPIC + MQTT_TOPIC_STATE_SUFFIX).c_str(), (fanState ? "ON" : "OFF"));
-  //delay(10);
-  mqttPubSub.publish((MQTT_SECURITY_SWITCH_TOPIC + MQTT_TOPIC_STATE_SUFFIX).c_str(), (pumpSecurity ? "ON" : "OFF"));
->>>>>>> f36618bf739f918d6b4c4cce1367ce7440fdcbd6
 
   //////////////
  // AM2320 ////
