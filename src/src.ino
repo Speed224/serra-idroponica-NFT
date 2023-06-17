@@ -45,6 +45,8 @@ const byte                GENERAL_BUTTON = 5;
 const byte                ONBOARD_LED = 2;
 
 const String              LIGHT_NAME = "_light";
+const String              LIGHT_ON_NAME = "_light_on";
+const String              LIGHT_OFF_NAME = "_light_off";
 const String              WATER_PUMP_NAME = "_waterpump";
 const String              AIR_PUMP_NAME = "_airpump";
 const String              TEMPERATURE_NAME = "_temperature";
@@ -54,6 +56,10 @@ const String              PH_NAME = "_ph";
 const String              FLOAT_SENSOR_NAME = "_floatsensor";
 const String              FAN_NAME = "_fan";
 const String              SECURITY_SWITCH_NAME = "_securityswitch";
+const String              SEND_DATA_PERIOD_NAME = "_senddataperiod";
+const String              POLLING_PERIOD_NAME = "_pollingperiod";
+
+
  
 
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
@@ -68,7 +74,7 @@ int                 MQTT_PORT = 1883;                                         //
 
 
 const char*         DEVICE_MODEL = "esp32Serra";                              // Hardware Model
-const char*         SOFTWARE_VERSION = "0.7";                                 // Firmware Version
+const char*         SOFTWARE_VERSION = "0.8";                                 // Firmware Version
 const char*         MANUFACTURER = "Speed224";                                // Manufacturer Name
 const String        DEVICE_NAME = "serra";                                    // Device Name
 const String        MQTT_TOPIC_STATUS = "esp32iot/" + DEVICE_NAME;
@@ -107,11 +113,17 @@ const String        MQTT_FLOAT_SENSOR_TOPIC =  MQTT_TOPIC_HA_PREFIX + "binary_se
 //OPTIONS STATE
 const String        MQTT_SECURITY_SWITCH_TOPIC =  MQTT_TOPIC_HA_PREFIX + "switch/" + MQTT_TOPIC_STATUS + SECURITY_SWITCH_NAME;
 const String        MQTT_LIGHT_TIME_TOPIC =  MQTT_LIGHT_TOPIC + MQTT_TOPIC_OPTION_SUFFIX;
+const String        MQTT_LIGHT_ON_TIME_TOPIC =  MQTT_TOPIC_HA_PREFIX + "number/" + MQTT_TOPIC_STATUS + LIGHT_ON_NAME;
+const String        MQTT_LIGHT_OFF_TIME_TOPIC =  MQTT_TOPIC_HA_PREFIX + "number/" + MQTT_TOPIC_STATUS + LIGHT_OFF_NAME;
+const String        MQTT_SEND_DATA_PERIOD_TOPIC =  MQTT_TOPIC_HA_PREFIX + "number/" + MQTT_TOPIC_STATUS + SEND_DATA_PERIOD_NAME;
+const String        MQTT_POLLING_PERIOD_TOPIC =  MQTT_TOPIC_HA_PREFIX + "number/" + MQTT_TOPIC_STATUS + POLLING_PERIOD_NAME;
 
 
 
 
-const int           topicsNumber = 8;
+
+
+const int           topicsNumber = 13;
 const String        topics[topicsNumber] = {
                                             MQTT_TOPIC_HA_STATUS, 
                                             MQTT_TOPIC_OPTION, 
@@ -120,7 +132,12 @@ const String        topics[topicsNumber] = {
                                             (MQTT_WATER_PUMP_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX),
                                             (MQTT_AIR_PUMP_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX),
                                             (MQTT_FAN_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX),
-                                            MQTT_LIGHT_TIME_TOPIC
+                                            (MQTT_SECURITY_SWITCH_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX),
+                                            MQTT_LIGHT_TIME_TOPIC,
+                                            (MQTT_LIGHT_ON_TIME_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX),
+                                            (MQTT_LIGHT_OFF_TIME_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX),
+                                            (MQTT_SEND_DATA_PERIOD_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX),
+                                            (MQTT_POLLING_PERIOD_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX)
                                            };
 
 
@@ -148,6 +165,7 @@ unsigned long       wifiPreviousMillis = 0;
 unsigned long       lightPreviousMillis = 0;
 unsigned long       samplePreviousMillis = 0;
 unsigned long       mqttLoopPreviousMillis = 0;
+unsigned int        blinkPreviousMillis = 0;
 
 unsigned long       currentMillis;
 
@@ -159,10 +177,11 @@ unsigned int        lightOFFPeriod = 30000;
 unsigned int        lightPeriodBeforeReset = 0;
 unsigned int        lightPeriodPassed = 0;
 
-
+bool                blink = true;
+int                 blinkDelay = 500;
 
 char                command;
-bool                security = false;
+bool                disableSecurity = false;
 
 bool                isDay = true;
 bool                lightState = true;
@@ -199,7 +218,7 @@ int phAnalogBufferIndex = 0;
 
 // when float sensor fall
 void IRAM_ATTR floatSensorISR(){
-  if(!security){
+  if(!disableSecurity){
     waterPumpState = false;
     floatSensorState = false;
     sendMqttData = true;
@@ -272,7 +291,7 @@ void setup()
     Serial.println("No values saved for ssid or password");
   }
  
-  delay(50);
+  delay(150);
 
   wifiSetup();
 
@@ -382,7 +401,6 @@ void loop()
   if (currentMillis - wifiPreviousMillis >= PERIOD_MINUTE_1) {
     if(WiFi.status() != WL_CONNECTED){
       wifiSetup();
-      digitalWrite(ONBOARD_LED, HIGH);
     }
     else{
       digitalWrite(ONBOARD_LED, LOW);
@@ -391,6 +409,25 @@ void loop()
     wifiPreviousMillis = currentMillis;
   }
 
+  if(WiFi.status() != WL_CONNECTED){
+      blinkDelay = 500;
+    if (currentMillis - blinkPreviousMillis >= blinkDelay){
+      digitalWrite(ONBOARD_LED, blink);
+      blink = !blink;
+      blinkPreviousMillis = currentMillis;
+    }
+  }else{
+    if(!mqttPubSub.connected()){
+      blinkDelay = 200;
+      if (currentMillis - blinkPreviousMillis >= blinkDelay){
+        digitalWrite(ONBOARD_LED, blink);
+        blink = !blink;
+        blinkPreviousMillis = currentMillis;
+      }
+    }else{
+      digitalWrite(ONBOARD_LED, LOW);
+    }
+  }
 
   //read command from serial
   if(Serial.available())
@@ -436,6 +473,7 @@ void wifiSetup()
     Serial.print("IP address: ");
     Serial.println(WiFi.localIP());
   }else{
+    digitalWrite(ONBOARD_LED, HIGH);
     Serial.println("WiFi NOT connected!!!");
   }
 }
@@ -477,294 +515,7 @@ void mqttTopicsSubscribe(const String topics[topicsNumber], const int topicsNumb
       
 }
 
-//Discovery information for HOMEASSISTANT MQTT integration
-void mqttHomeAssistantDiscovery()
-{
-  String discoveryTopic;
-  String stateTopic;
-  String commandTopic;
-  String name;
-  String topic;
-  
-  String payload;
-  String strPayload;
 
-  int sendDelay = 50;
-
-  if(mqttPubSub.connected())
-  {
-    Serial.println("SEND HOME ASSISTANT DISCOVERY!!!");
-
-    StaticJsonDocument<600> payload;
-    JsonObject device;
-    JsonArray identifiers;
-    
-    device = payload.createNestedObject("device");
-    device["name"] = DEVICE_NAME;
-    device["model"] = DEVICE_MODEL;
-    device["sw_version"] = SOFTWARE_VERSION;
-    device["manufacturer"] = MANUFACTURER;
-
-  /////////////
- // LIGHT ////
-/////////////
-    delay(sendDelay);
-    
-    payload.clear();
-    identifiers.clear();
-    strPayload.clear();
-
-    discoveryTopic = MQTT_LIGHT_TOPIC + MQTT_TOPIC_DISCOVERY_SUFFIX;
-
-    payload["name"] = DEVICE_NAME + LIGHT_NAME;
-    payload["unique_id"] = UNIQUE_ID + LIGHT_NAME;
-    payload["state_topic"] = (MQTT_LIGHT_TOPIC + MQTT_TOPIC_STATE_SUFFIX);
-    payload["command_topic"] = (MQTT_LIGHT_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX);
-
-    identifiers = device.createNestedArray("identifiers");
-    identifiers.add(UNIQUE_ID);
-
-    serializeJsonPretty(payload, Serial);
-    Serial.println(" ");
-    serializeJson(payload, strPayload);
-
-    mqttPubSub.publish(discoveryTopic.c_str(), strPayload.c_str());
-    
-  //////////////////
- // WATER_PUMP ////
-//////////////////
-    delay(sendDelay);
-    
-    payload.clear();
-    identifiers.clear();
-    strPayload.clear();
-
-    discoveryTopic = MQTT_WATER_PUMP_TOPIC + MQTT_TOPIC_DISCOVERY_SUFFIX;
-    
-    payload["name"] = DEVICE_NAME + WATER_PUMP_NAME;
-    payload["unique_id"] = UNIQUE_ID + WATER_PUMP_NAME;
-    payload["state_topic"] = (MQTT_WATER_PUMP_TOPIC + MQTT_TOPIC_STATE_SUFFIX);
-    payload["command_topic"] = (MQTT_WATER_PUMP_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX);
-    payload["device_class"] = "switch";
-
-    identifiers = device.createNestedArray("identifiers");
-    identifiers.add(UNIQUE_ID);
-
-    serializeJsonPretty(payload, Serial);
-    Serial.println(" ");
-    serializeJson(payload, strPayload);
-
-    mqttPubSub.publish(discoveryTopic.c_str(), strPayload.c_str());
-
-  ////////////////
- // AIR_PUMP ////
-////////////////
-    delay(sendDelay);
-
-    payload.clear();
-    identifiers.clear();
-    strPayload.clear();
-
-    discoveryTopic = MQTT_AIR_PUMP_TOPIC + MQTT_TOPIC_DISCOVERY_SUFFIX;
-    payload["name"] = DEVICE_NAME + AIR_PUMP_NAME;
-    payload["unique_id"] = UNIQUE_ID + AIR_PUMP_NAME;
-    payload["state_topic"] = (MQTT_AIR_PUMP_TOPIC + MQTT_TOPIC_STATE_SUFFIX);
-    payload["command_topic"] = (MQTT_AIR_PUMP_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX);
-    payload["device_class"] = "switch";
-
-    identifiers = device.createNestedArray("identifiers");
-    identifiers.add(UNIQUE_ID);
-
-    serializeJsonPretty(payload, Serial);
-    Serial.println(" ");
-    serializeJson(payload, strPayload);
-
-    mqttPubSub.publish(discoveryTopic.c_str(), strPayload.c_str());
-
-  ///////////
- // FAN ////
-///////////
-    delay(sendDelay);
-
-    payload.clear();
-    identifiers.clear();
-    strPayload.clear();
-
-    discoveryTopic = MQTT_FAN_TOPIC + MQTT_TOPIC_DISCOVERY_SUFFIX;
-    payload["name"] = DEVICE_NAME + FAN_NAME;
-    payload["unique_id"] = UNIQUE_ID + FAN_NAME;
-    payload["state_topic"] = (MQTT_FAN_TOPIC + MQTT_TOPIC_STATE_SUFFIX);
-    payload["command_topic"] = (MQTT_FAN_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX);
-    payload["device_class"] = "switch";
-    identifiers = device.createNestedArray("identifiers");
-    identifiers.add(UNIQUE_ID);
-
-    serializeJsonPretty(payload, Serial);
-    Serial.println(" ");
-    serializeJson(payload, strPayload);
-
-    mqttPubSub.publish(discoveryTopic.c_str(), strPayload.c_str());
-
-  ///////////////////
- // TEMPERATURE ////
-///////////////////
-    delay(sendDelay);
-
-    payload.clear();
-    identifiers.clear();
-    strPayload.clear();
-
-    discoveryTopic = MQTT_TEMPERATURE_TOPIC + MQTT_TOPIC_DISCOVERY_SUFFIX;
-    
-    payload["name"] = DEVICE_NAME + TEMPERATURE_NAME;
-    payload["unique_id"] = UNIQUE_ID + TEMPERATURE_NAME;
-    payload["state_topic"] = MQTT_THERMOMETER_TOPIC_STATE;
-    payload["value_template"] = "{{ value_json.temperature | is_defined}}";
-    payload["device_class"] = "temperature";
-    payload["unit_of_measurement"] = "°C";
-    payload["suggested_display_precision"] = 1;
-
-    identifiers = device.createNestedArray("identifiers");
-    identifiers.add(UNIQUE_ID);
-
-    serializeJsonPretty(payload, Serial);
-    Serial.println(" ");
-    serializeJson(payload, strPayload);
-
-    mqttPubSub.publish(discoveryTopic.c_str(), strPayload.c_str());
-
-  ////////////////
- // HUMIDITY ////
-////////////////
-    delay(sendDelay);
-
-    payload.clear();
-    identifiers.clear();
-    strPayload.clear();
-
-    discoveryTopic = MQTT_HUMIDITY_TOPIC + MQTT_TOPIC_DISCOVERY_SUFFIX;
-    payload["name"] = DEVICE_NAME + HUMIDITY_NAME;
-    payload["unique_id"] = UNIQUE_ID + HUMIDITY_NAME;
-    payload["state_topic"] = MQTT_THERMOMETER_TOPIC_STATE;
-
-    payload["value_template"] = "{{ value_json.humidity | is_defined }}";
-    payload["device_class"] = "humidity";
-    payload["unit_of_measurement"] = "%";
-
-    identifiers = device.createNestedArray("identifiers");
-    identifiers.add(UNIQUE_ID);
-
-    serializeJsonPretty(payload, Serial);
-    Serial.println(" ");
-    serializeJson(payload, strPayload);
-
-    mqttPubSub.publish(discoveryTopic.c_str(), strPayload.c_str());
-
-  ///////////
- // TDS ////
-///////////
-    delay(sendDelay);
-
-    payload.clear();
-    identifiers.clear();
-    strPayload.clear();
-
-    discoveryTopic = MQTT_TDS_TOPIC + MQTT_TOPIC_DISCOVERY_SUFFIX;
-    
-    payload["name"] = DEVICE_NAME + TDS_NAME;
-    payload["unique_id"] = UNIQUE_ID + TDS_NAME;
-    payload["state_topic"] = MQTT_WATER_QUALITY_TOPIC_STATE;
-    payload["value_template"] = "{{ value_json.tds | is_defined }}";
-    payload["unit_of_measurement"] = "ppm";
-    payload["suggested_display_precision"] = 1;
-
-    identifiers = device.createNestedArray("identifiers");
-    identifiers.add(UNIQUE_ID);
-
-    serializeJsonPretty(payload, Serial);
-    Serial.println(" ");
-    serializeJson(payload, strPayload);
-
-    mqttPubSub.publish(discoveryTopic.c_str(), strPayload.c_str());
-
-  //////////
- // PH ////
-//////////
-    delay(sendDelay);
-
-    payload.clear();
-    identifiers.clear();
-    strPayload.clear();
-
-    discoveryTopic = MQTT_PH_TOPIC + MQTT_TOPIC_DISCOVERY_SUFFIX;
-    
-    payload["name"] = DEVICE_NAME + PH_NAME;
-    payload["unique_id"] = UNIQUE_ID + PH_NAME;
-    payload["state_topic"] = MQTT_WATER_QUALITY_TOPIC_STATE;
-    payload["value_template"] = "{{ value_json.ph | is_defined }}";
-    payload["unit_of_measurement"] = "ph";
-    payload["suggested_display_precision"] = 1;
-
-    identifiers = device.createNestedArray("identifiers");
-    identifiers.add(UNIQUE_ID);
-
-    serializeJsonPretty(payload, Serial);
-    Serial.println(" ");
-    serializeJson(payload, strPayload);
-
-    mqttPubSub.publish(discoveryTopic.c_str(), strPayload.c_str());
-
-  ////////////////////
- // FLOAT SENSOR ////
-////////////////////
-    delay(sendDelay);
-
-    payload.clear();
-    identifiers.clear();
-    strPayload.clear();
-
-    discoveryTopic = MQTT_FLOAT_SENSOR_TOPIC + MQTT_TOPIC_DISCOVERY_SUFFIX;
-    
-    payload["name"] = DEVICE_NAME + FLOAT_SENSOR_NAME;
-    payload["unique_id"] = UNIQUE_ID + FLOAT_SENSOR_NAME;
-    payload["state_topic"] = (MQTT_FLOAT_SENSOR_TOPIC + MQTT_TOPIC_STATE_SUFFIX);
-
-    identifiers = device.createNestedArray("identifiers");
-    identifiers.add(UNIQUE_ID);
-
-    serializeJsonPretty(payload, Serial);
-    Serial.println(" ");
-    serializeJson(payload, strPayload);
-
-    mqttPubSub.publish(discoveryTopic.c_str(), strPayload.c_str());
-
-  ///////////////////////
- // SECURITY SWITCH ////
-///////////////////////
-    delay(sendDelay);
-
-    payload.clear();
-    identifiers.clear();
-    strPayload.clear();
-
-    discoveryTopic = MQTT_SECURITY_SWITCH_TOPIC + MQTT_TOPIC_DISCOVERY_SUFFIX;
-
-    payload["name"] = DEVICE_NAME + SECURITY_SWITCH_NAME;
-    payload["unique_id"] = UNIQUE_ID + SECURITY_SWITCH_NAME;
-    payload["state_topic"] = (MQTT_SECURITY_SWITCH_TOPIC + MQTT_TOPIC_STATE_SUFFIX);
-    payload["command_topic"] = MQTT_TOPIC_OPTION;
-    payload["device_class"] = "switch";
-
-    identifiers = device.createNestedArray("identifiers");
-    identifiers.add(UNIQUE_ID);
-
-    serializeJsonPretty(payload, Serial);
-    Serial.println(" ");
-    serializeJson(payload, strPayload);
-
-    mqttPubSub.publish(discoveryTopic.c_str(), strPayload.c_str());
-  }
-}
 
 //Take command from serial and check if valid, used for testing
 void commandExecutor(char command){
@@ -797,135 +548,7 @@ void commandExecutor(char command){
 
 }
 
-//read the message from subscribed topic and do the logic
-void mqttReceiverCallback(char* topic, byte* payload, unsigned int length){
-  Serial.print("Message arrived on topic: ");
-  Serial.print(topic);
-  Serial.print(". Message: ");
 
-  byte state = 0;
-
-  String message;
-
-  StaticJsonDocument<600> json;
-  
-  for (int i = 0; i < length; i++) {
-      Serial.print((char)payload[i]);
-      message += (char)payload[i];
-  }
-  Serial.println();
-
-  //SERRA OPTION FROM MQTT
-  if(String(topic) == String(MQTT_TOPIC_OPTION)){
-    int temp;   //use temp because if the value is not in the json
-                //temp var become 0 and not the real var
-
-    deserializeJson(json, payload);
-
-    //DATA PERIOD
-    temp = json["sendDataPeriod"];
-    if(temp < 5000)
-      temp = PERIOD_SECOND_5;
-    if(temp == 0)
-      temp = sendDataPeriod;
-    sendDataPeriod = temp;
-    Serial.print("sendDataPeriod: ");
-    Serial.println(sendDataPeriod);
-
-    //POLLING PERIOD
-    temp = json["pollingDataPeriod"];
-    if(temp < 3000)
-      temp = 3000;
-    if(temp == 0)
-      temp = pollingDataPeriod;
-    pollingDataPeriod = temp;
-    Serial.print("pollingDataPeriod: ");
-    Serial.println(pollingDataPeriod);
-
-    security = json["security"];
-    
-    if(security)
-      Serial.println("PUMP SECURITY REMOVED");
-    else
-      Serial.println("PUMP SECURITY ENABLED");
-
-    //refreshing states when finished
-    mqttStates();
-  }
-
-  if(String(topic) == String(MQTT_LIGHT_TIME_TOPIC) && firstBoot){
-    deserializeJson(json, payload);
-
-    lightPeriodBeforeReset = json["lightperiodpassed"];
-    isDay = json["isday"];
-    lightLogic(isDay);
-
-    firstBoot = false;
-  }
-
-  //SERRA COMMAND FROM MQTT
-  if(String(topic) == String(MQTT_TOPIC_COMMAND)){
-    Serial.println((char)payload[0]);
-    commandExecutor((char)payload[0]);
-  }
-
-  //LIGHT COMMAND
-  if(String(topic) == String((MQTT_LIGHT_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX))) 
-  {
-    if(security){
-      if(message == "ON")
-        lightLogic(true);
-      else
-        lightLogic(false);
-    }
-    mqttStates();
-  }
-
-  //WATER PUMP COMMAND
-  if(String(topic) == String((MQTT_WATER_PUMP_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX))) 
-  {
-    //if there is water or security is true
-    if(floatSensorState || security){
-      if(message == "ON")
-        waterPumpLogic(true);
-      else
-        waterPumpLogic(false);
-    }
-    mqttStates();
-  }
-
-  //AIR PUMP COMMAND
-  if(String(topic) == String((MQTT_AIR_PUMP_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX))) 
-  {
-    if(message == "ON")
-      airPumpLogic(true);
-    else
-      airPumpLogic(false);
-    
-    mqttStates();
-  }
-  
-  //FAN COMMAND
-  if(String(topic) == String((MQTT_FAN_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX))) 
-  {
-    if(message == "ON")
-      fanLogic(true);
-    else
-      fanLogic(false);
-    
-    mqttStates();
-  }
-
-  //HOME ASSISTANT STATUS
-  if(String(topic) == String(MQTT_TOPIC_HA_STATUS)) 
-  {
-    //when homeassistant turn on send "online" message to MQTT
-    //then send discovery to ensure if system is resetted hassio
-    //know sensor again
-    if(message == "online")
-      mqttHomeAssistantDiscovery();
-  }
-}
 //@param logicState set the state of light to this
 void lightLogic(bool logicState){
   lightState = logicState;
@@ -976,7 +599,7 @@ void fanLogic(bool logicState){
 //change sensor state depending on the value
 void floatSensorLogic(){
   floatSensorState = digitalRead(FLOAT_SENSOR);
-  if(!security){
+  if(!disableSecurity){
     if(!floatSensorState)
       waterPumpState = false;
   }
@@ -1070,18 +693,45 @@ void phLogic(){
 }
 
 
+void logics(){
+  if(!digitalRead(GENERAL_BUTTON)){
+    Serial.println("General Button is OFF");
+    lightLogic(false);
+    floatSensorState = true;
+    waterPumpLogic(false);
+    airPumpLogic(false);
+    fanLogic(false);
+  }else{
+    Serial.println("General Button is ON");
+    lightLogic(lightState);
+    floatSensorLogic();
+    waterPumpLogic(waterPumpState);
+    airPumpLogic(airPumpState);
+    fanLogic(fanState);
+    am2320Logic();
+    tdsLogic();
+    phLogic();
+  }
+  
+}
+
 //check the states and send to MQTT server
 void mqttStates(){
   Serial.println("MQTT: Sending Data");
   
   //If the server is slow put small delay between messages
   mqttPubSub.publish((MQTT_LIGHT_TOPIC + MQTT_TOPIC_STATE_SUFFIX).c_str(), (lightState ? "ON" : "OFF"));
-  //delay(10);
+  delay(10);
   mqttPubSub.publish((MQTT_FLOAT_SENSOR_TOPIC + MQTT_TOPIC_STATE_SUFFIX).c_str(), (floatSensorState ? "ON" : "OFF"));
   mqttPubSub.publish((MQTT_WATER_PUMP_TOPIC + MQTT_TOPIC_STATE_SUFFIX).c_str(), (waterPumpState ? "ON" : "OFF"));
   mqttPubSub.publish((MQTT_AIR_PUMP_TOPIC + MQTT_TOPIC_STATE_SUFFIX).c_str(), (airPumpState ? "ON" : "OFF"));
   mqttPubSub.publish((MQTT_FAN_TOPIC + MQTT_TOPIC_STATE_SUFFIX).c_str(), (fanState ? "ON" : "OFF"));
-  mqttPubSub.publish((MQTT_SECURITY_SWITCH_TOPIC + MQTT_TOPIC_STATE_SUFFIX).c_str(), (security ? "ON" : "OFF"));
+  mqttPubSub.publish((MQTT_SECURITY_SWITCH_TOPIC + MQTT_TOPIC_STATE_SUFFIX).c_str(), (disableSecurity ? "ON" : "OFF"));
+  delay(10);
+  mqttPubSub.publish((MQTT_LIGHT_ON_TIME_TOPIC + MQTT_TOPIC_STATE_SUFFIX).c_str(), String(lightONPeriod/PERIOD_HOUR_1).c_str(), true);
+  mqttPubSub.publish((MQTT_LIGHT_OFF_TIME_TOPIC + MQTT_TOPIC_STATE_SUFFIX).c_str(), String(lightOFFPeriod/PERIOD_HOUR_1).c_str(), true);
+  mqttPubSub.publish((MQTT_SEND_DATA_PERIOD_TOPIC + MQTT_TOPIC_STATE_SUFFIX).c_str(), String(sendDataPeriod/PERIOD_SECOND_1).c_str(), true);
+  mqttPubSub.publish((MQTT_POLLING_PERIOD_TOPIC + MQTT_TOPIC_STATE_SUFFIX).c_str(), String(pollingDataPeriod/PERIOD_SECOND_1).c_str(), true);
 
   //////////////
  // AM2320 ////
@@ -1120,26 +770,496 @@ void mqttStates(){
     serializeJson(payload, strPayload); 
     mqttPubSub.publish(MQTT_LIGHT_TIME_TOPIC.c_str(), strPayload.c_str(), true);
   }
+
 }
 
-void logics(){
-  if(!digitalRead(GENERAL_BUTTON)){
-    Serial.println("General Button is OFF");
-    lightLogic(false);
-    floatSensorState = true;
-    waterPumpLogic(false);
-    airPumpLogic(false);
-    fanLogic(false);
-  }else{
-    Serial.println("General Button is ON");
-    lightLogic(lightState);
-    floatSensorLogic();
-    waterPumpLogic(waterPumpState);
-    airPumpLogic(airPumpState);
-    fanLogic(fanState);
-    am2320Logic();
-    tdsLogic();
-    phLogic();
+
+//read the message from subscribed topic and do the logic
+void mqttReceiverCallback(char* topic, byte* payload, unsigned int length){
+  Serial.print("Message arrived on topic: ");
+  Serial.print(topic);
+  Serial.print(". Message: ");
+
+  byte state = 0;
+
+  String message;
+
+  StaticJsonDocument<600> json;
+  
+  for (int i = 0; i < length; i++) {
+      Serial.print((char)payload[i]);
+      message += (char)payload[i];
+  }
+  Serial.println();
+
+  //HOME ASSISTANT STATUS
+  if(String(topic) == String(MQTT_TOPIC_HA_STATUS)) 
+  {
+    //when homeassistant turn on send "online" message to MQTT
+    //then send discovery to ensure if system is resetted hassio
+    //know sensor again
+    if(message == "online")
+      mqttHomeAssistantDiscovery();
+  }
+
+  //SECURITY SWITCH
+  if(String(topic) == String(MQTT_SECURITY_SWITCH_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX)){
+    if(message == "OFF")
+      disableSecurity = false;
+    else
+      disableSecurity = true;
+    
+    //refreshing states when finished
+    mqttStates();
+  }
+
+  //SERRA COMMAND FROM MQTT
+  if(String(topic) == String(MQTT_TOPIC_COMMAND)){
+    Serial.println((char)payload[0]);
+    commandExecutor((char)payload[0]);
+  }
+
+  //TODO SYNC FUNCTION
+  if(String(topic) == String(MQTT_LIGHT_TIME_TOPIC)){
+    deserializeJson(json, payload);
+
+    if(firstBoot){
+      lightPeriodBeforeReset = json["lightperiodpassed"];
+      isDay = json["isday"];
+      lightLogic(isDay);
+      firstBoot = false;
+    }
+  }
+
+  //LIGHT ON TIME FROM MQTT MULTIPLIED PER PERIOD_HOUR_1
+  if(String(topic) == String((MQTT_LIGHT_ON_TIME_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX))){
+    int num = 1;
+    if(message.toInt() > 0)
+      num = message.toInt();
+
+    lightONPeriod = num * PERIOD_HOUR_1;
+    mqttStates();
+  }
+
+  //LIGHT OFF TIME FROM MQTT MULTIPLIED PER PERIOD_HOUR_1
+  if(String(topic) == String((MQTT_LIGHT_OFF_TIME_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX))){
+    int num = 1;
+    if(message.toInt() > 0)
+      num = message.toInt();
+
+    lightOFFPeriod = num * PERIOD_HOUR_1;
+    mqttStates();
+  }
+
+  //TIME SENDING MQTT DATA
+  if(String(topic) == String((MQTT_SEND_DATA_PERIOD_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX))){
+    int num = 5;
+    if(message.toInt() > 5) //DEFAULT MIN SECONDS
+      num = message.toInt();
+
+    sendDataPeriod = num * PERIOD_SECOND_1;
+    mqttStates();
+  }
+
+  //TIME POLLING DATA
+  if(String(topic) == String((MQTT_POLLING_PERIOD_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX))){
+    int num = 4;
+    if(message.toInt() > 4) //DEFAULT MIN SECONDS
+      num = message.toInt();
+
+    pollingDataPeriod = num * PERIOD_SECOND_1;
+    mqttStates();
+  }
+   
+
+  //LIGHT COMMAND
+  if(String(topic) == String((MQTT_LIGHT_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX))) 
+  {
+    if(disableSecurity){
+      if(message == "ON")
+        lightLogic(true);
+      else
+        lightLogic(false);
+    }
+    mqttStates();
+  }
+
+  //WATER PUMP COMMAND
+  if(String(topic) == String((MQTT_WATER_PUMP_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX))) 
+  {
+    //if there is water or security is true
+    if(floatSensorState || disableSecurity){
+      if(message == "ON")
+        waterPumpLogic(true);
+      else
+        waterPumpLogic(false);
+    }
+    mqttStates();
+  }
+
+  //AIR PUMP COMMAND
+  if(String(topic) == String((MQTT_AIR_PUMP_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX))) 
+  {
+    if(message == "ON")
+      airPumpLogic(true);
+    else
+      airPumpLogic(false);
+    
+    mqttStates();
   }
   
+  //FAN COMMAND
+  if(String(topic) == String((MQTT_FAN_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX))) 
+  {
+    if(message == "ON")
+      fanLogic(true);
+    else
+      fanLogic(false);
+    
+    mqttStates();
+  }
+
+}
+
+//Discovery information for HOMEASSISTANT MQTT integration
+void mqttHomeAssistantDiscovery()
+{
+  String discoveryTopic;
+  String stateTopic;
+  String commandTopic;
+  String name;
+  String topic;
+  
+  String payload;
+  String strPayload;
+
+  int sendDelay = 50;
+
+  if(mqttPubSub.connected())
+  {
+    Serial.println("SEND HOME ASSISTANT DISCOVERY!!!");
+
+    StaticJsonDocument<600> payload;
+    JsonObject device;
+    JsonArray identifiers;
+    
+    
+
+  /////////////
+ // LIGHT ////
+/////////////
+    delay(sendDelay);
+
+    discoveryTopic = MQTT_LIGHT_TOPIC + MQTT_TOPIC_DISCOVERY_SUFFIX;
+
+    payload["name"] = DEVICE_NAME + LIGHT_NAME;
+    payload["unique_id"] = UNIQUE_ID + LIGHT_NAME;
+    payload["state_topic"] = (MQTT_LIGHT_TOPIC + MQTT_TOPIC_STATE_SUFFIX);
+    payload["command_topic"] = (MQTT_LIGHT_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX);
+
+    device = payload.createNestedObject("device");
+    device["name"] = DEVICE_NAME;
+    device["model"] = DEVICE_MODEL;
+    device["sw_version"] = SOFTWARE_VERSION;
+    device["manufacturer"] = MANUFACTURER;
+    identifiers = device.createNestedArray("identifiers");
+    identifiers.add(UNIQUE_ID);
+    
+
+    serializeJsonPretty(payload, Serial);
+    Serial.println(" ");
+    serializeJson(payload, strPayload);
+
+    mqttPubSub.publish(discoveryTopic.c_str(), strPayload.c_str());
+
+    device.clear();
+    identifiers.clear();
+  ////////////////
+ // LIGHT_ON ////
+////////////////
+    delay(sendDelay);
+    
+    payload.clear();
+    strPayload.clear();
+
+    discoveryTopic = MQTT_LIGHT_ON_TIME_TOPIC + MQTT_TOPIC_DISCOVERY_SUFFIX;
+
+    payload["name"] = DEVICE_NAME + LIGHT_ON_NAME;
+    payload["unique_id"] = UNIQUE_ID + LIGHT_ON_NAME;
+    payload["state_topic"] = (MQTT_LIGHT_ON_TIME_TOPIC + MQTT_TOPIC_STATE_SUFFIX);
+    payload["command_topic"] = (MQTT_LIGHT_ON_TIME_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX);
+
+    serializeJsonPretty(payload, Serial);
+    Serial.println(" ");
+    serializeJson(payload, strPayload);
+
+    mqttPubSub.publish(discoveryTopic.c_str(), strPayload.c_str());
+
+  /////////////////
+ // LIGHT_OFF ////
+/////////////////
+    delay(sendDelay);
+    
+    payload.clear();
+    strPayload.clear();
+
+    discoveryTopic = MQTT_LIGHT_OFF_TIME_TOPIC + MQTT_TOPIC_DISCOVERY_SUFFIX;
+
+    payload["name"] = DEVICE_NAME + LIGHT_OFF_NAME;
+    payload["unique_id"] = UNIQUE_ID + LIGHT_OFF_NAME;
+    payload["state_topic"] = (MQTT_LIGHT_OFF_TIME_TOPIC + MQTT_TOPIC_STATE_SUFFIX);
+    payload["command_topic"] = (MQTT_LIGHT_OFF_TIME_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX);
+
+    serializeJsonPretty(payload, Serial);
+    Serial.println(" ");
+    serializeJson(payload, strPayload);
+
+    mqttPubSub.publish(discoveryTopic.c_str(), strPayload.c_str());
+
+  //////////////////
+ // WATER_PUMP ////
+//////////////////
+    delay(sendDelay);
+    
+    payload.clear();
+    strPayload.clear();
+
+    discoveryTopic = MQTT_WATER_PUMP_TOPIC + MQTT_TOPIC_DISCOVERY_SUFFIX;
+    
+    payload["name"] = DEVICE_NAME + WATER_PUMP_NAME;
+    payload["unique_id"] = UNIQUE_ID + WATER_PUMP_NAME;
+    payload["state_topic"] = (MQTT_WATER_PUMP_TOPIC + MQTT_TOPIC_STATE_SUFFIX);
+    payload["command_topic"] = (MQTT_WATER_PUMP_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX);
+    payload["device_class"] = "switch";
+
+    serializeJsonPretty(payload, Serial);
+    Serial.println(" ");
+    serializeJson(payload, strPayload);
+
+    mqttPubSub.publish(discoveryTopic.c_str(), strPayload.c_str());
+
+  ////////////////
+ // AIR_PUMP ////
+////////////////
+    delay(sendDelay);
+
+    payload.clear();
+    strPayload.clear();
+
+    discoveryTopic = MQTT_AIR_PUMP_TOPIC + MQTT_TOPIC_DISCOVERY_SUFFIX;
+    payload["name"] = DEVICE_NAME + AIR_PUMP_NAME;
+    payload["unique_id"] = UNIQUE_ID + AIR_PUMP_NAME;
+    payload["state_topic"] = (MQTT_AIR_PUMP_TOPIC + MQTT_TOPIC_STATE_SUFFIX);
+    payload["command_topic"] = (MQTT_AIR_PUMP_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX);
+    payload["device_class"] = "switch";
+
+    serializeJsonPretty(payload, Serial);
+    Serial.println(" ");
+    serializeJson(payload, strPayload);
+
+    mqttPubSub.publish(discoveryTopic.c_str(), strPayload.c_str());
+
+  ///////////
+ // FAN ////
+///////////
+    delay(sendDelay);
+
+    payload.clear();
+    strPayload.clear();
+
+    discoveryTopic = MQTT_FAN_TOPIC + MQTT_TOPIC_DISCOVERY_SUFFIX;
+    payload["name"] = DEVICE_NAME + FAN_NAME;
+    payload["unique_id"] = UNIQUE_ID + FAN_NAME;
+    payload["state_topic"] = (MQTT_FAN_TOPIC + MQTT_TOPIC_STATE_SUFFIX);
+    payload["command_topic"] = (MQTT_FAN_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX);
+    payload["device_class"] = "switch";
+
+    serializeJsonPretty(payload, Serial);
+    Serial.println(" ");
+    serializeJson(payload, strPayload);
+
+    mqttPubSub.publish(discoveryTopic.c_str(), strPayload.c_str());
+
+  ///////////////////
+ // TEMPERATURE ////
+///////////////////
+    delay(sendDelay);
+
+    payload.clear();
+    strPayload.clear();
+
+    discoveryTopic = MQTT_TEMPERATURE_TOPIC + MQTT_TOPIC_DISCOVERY_SUFFIX;
+    
+    payload["name"] = DEVICE_NAME + TEMPERATURE_NAME;
+    payload["unique_id"] = UNIQUE_ID + TEMPERATURE_NAME;
+    payload["state_topic"] = MQTT_THERMOMETER_TOPIC_STATE;
+    payload["value_template"] = "{{ value_json.temperature | is_defined}}";
+    payload["device_class"] = "temperature";
+    payload["unit_of_measurement"] = "°C";
+    payload["suggested_display_precision"] = 1;
+
+    serializeJsonPretty(payload, Serial);
+    Serial.println(" ");
+    serializeJson(payload, strPayload);
+
+    mqttPubSub.publish(discoveryTopic.c_str(), strPayload.c_str());
+
+  ////////////////
+ // HUMIDITY ////
+////////////////
+    delay(sendDelay);
+
+    payload.clear();
+    strPayload.clear();
+
+    discoveryTopic = MQTT_HUMIDITY_TOPIC + MQTT_TOPIC_DISCOVERY_SUFFIX;
+    payload["name"] = DEVICE_NAME + HUMIDITY_NAME;
+    payload["unique_id"] = UNIQUE_ID + HUMIDITY_NAME;
+    payload["state_topic"] = MQTT_THERMOMETER_TOPIC_STATE;
+
+    payload["value_template"] = "{{ value_json.humidity | is_defined }}";
+    payload["device_class"] = "humidity";
+    payload["unit_of_measurement"] = "%";
+
+    serializeJsonPretty(payload, Serial);
+    Serial.println(" ");
+    serializeJson(payload, strPayload);
+
+    mqttPubSub.publish(discoveryTopic.c_str(), strPayload.c_str());
+
+  ///////////
+ // TDS ////
+///////////
+    delay(sendDelay);
+
+    payload.clear();
+    strPayload.clear();
+
+    discoveryTopic = MQTT_TDS_TOPIC + MQTT_TOPIC_DISCOVERY_SUFFIX;
+    
+    payload["name"] = DEVICE_NAME + TDS_NAME;
+    payload["unique_id"] = UNIQUE_ID + TDS_NAME;
+    payload["state_topic"] = MQTT_WATER_QUALITY_TOPIC_STATE;
+    payload["value_template"] = "{{ value_json.tds | is_defined }}";
+    payload["unit_of_measurement"] = "ppm";
+    payload["suggested_display_precision"] = 1;
+
+    serializeJsonPretty(payload, Serial);
+    Serial.println(" ");
+    serializeJson(payload, strPayload);
+
+    mqttPubSub.publish(discoveryTopic.c_str(), strPayload.c_str());
+
+  //////////
+ // PH ////
+//////////
+    delay(sendDelay);
+
+    payload.clear();
+    strPayload.clear();
+
+    discoveryTopic = MQTT_PH_TOPIC + MQTT_TOPIC_DISCOVERY_SUFFIX;
+    
+    payload["name"] = DEVICE_NAME + PH_NAME;
+    payload["unique_id"] = UNIQUE_ID + PH_NAME;
+    payload["state_topic"] = MQTT_WATER_QUALITY_TOPIC_STATE;
+    payload["value_template"] = "{{ value_json.ph | is_defined }}";
+    payload["unit_of_measurement"] = "ph";
+    payload["suggested_display_precision"] = 1;
+
+    serializeJsonPretty(payload, Serial);
+    Serial.println(" ");
+    serializeJson(payload, strPayload);
+
+    mqttPubSub.publish(discoveryTopic.c_str(), strPayload.c_str());
+
+  ////////////////////
+ // FLOAT SENSOR ////
+////////////////////
+    delay(sendDelay);
+
+    payload.clear();
+    strPayload.clear();
+
+    discoveryTopic = MQTT_FLOAT_SENSOR_TOPIC + MQTT_TOPIC_DISCOVERY_SUFFIX;
+    
+    payload["name"] = DEVICE_NAME + FLOAT_SENSOR_NAME;
+    payload["unique_id"] = UNIQUE_ID + FLOAT_SENSOR_NAME;
+    payload["state_topic"] = (MQTT_FLOAT_SENSOR_TOPIC + MQTT_TOPIC_STATE_SUFFIX);
+
+    serializeJsonPretty(payload, Serial);
+    Serial.println(" ");
+    serializeJson(payload, strPayload);
+
+    mqttPubSub.publish(discoveryTopic.c_str(), strPayload.c_str());
+
+  ///////////////////////
+ // SECURITY SWITCH ////
+///////////////////////
+    delay(sendDelay);
+
+    payload.clear();
+    strPayload.clear();
+
+    discoveryTopic = MQTT_SECURITY_SWITCH_TOPIC + MQTT_TOPIC_DISCOVERY_SUFFIX;
+
+    payload["name"] = DEVICE_NAME + SECURITY_SWITCH_NAME;
+    payload["unique_id"] = UNIQUE_ID + SECURITY_SWITCH_NAME;
+    payload["state_topic"] = (MQTT_SECURITY_SWITCH_TOPIC + MQTT_TOPIC_STATE_SUFFIX);
+    payload["command_topic"] = (MQTT_SECURITY_SWITCH_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX);
+    payload["device_class"] = "switch";
+
+
+    serializeJsonPretty(payload, Serial);
+    Serial.println(" ");
+    serializeJson(payload, strPayload);
+
+    mqttPubSub.publish(discoveryTopic.c_str(), strPayload.c_str());
+
+  ///////////////////////////
+ // SENDING_DATA_PERIOD ////
+///////////////////////////
+    delay(sendDelay);
+    
+    payload.clear();
+    strPayload.clear();
+
+    discoveryTopic = MQTT_SEND_DATA_PERIOD_TOPIC + MQTT_TOPIC_DISCOVERY_SUFFIX;
+
+    payload["name"] = DEVICE_NAME + SEND_DATA_PERIOD_NAME;
+    payload["unique_id"] = UNIQUE_ID + SEND_DATA_PERIOD_NAME;
+    payload["state_topic"] = (MQTT_SEND_DATA_PERIOD_TOPIC + MQTT_TOPIC_STATE_SUFFIX);
+    payload["command_topic"] = (MQTT_SEND_DATA_PERIOD_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX);
+
+    serializeJsonPretty(payload, Serial);
+    Serial.println(" ");
+    serializeJson(payload, strPayload);
+
+    mqttPubSub.publish(discoveryTopic.c_str(), strPayload.c_str());
+
+  ///////////////////////////
+ // POLLING_DATA_PERIOD ////
+///////////////////////////
+    delay(sendDelay);
+    
+    payload.clear();
+    strPayload.clear();
+
+    discoveryTopic = MQTT_POLLING_PERIOD_TOPIC + MQTT_TOPIC_DISCOVERY_SUFFIX;
+
+    payload["name"] = DEVICE_NAME + POLLING_PERIOD_NAME;
+    payload["unique_id"] = UNIQUE_ID + POLLING_PERIOD_NAME;
+    payload["state_topic"] = (MQTT_POLLING_PERIOD_TOPIC + MQTT_TOPIC_STATE_SUFFIX);
+    payload["command_topic"] = (MQTT_POLLING_PERIOD_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX);
+
+    serializeJsonPretty(payload, Serial);
+    Serial.println(" ");
+    serializeJson(payload, strPayload);
+
+    mqttPubSub.publish(discoveryTopic.c_str(), strPayload.c_str());
+
+
+  }
+
+
 }
