@@ -158,6 +158,7 @@ bool                firstBoot = true;
 short               numberOfSamples = 5;
 String              UNIQUE_ID;
 bool                sendMqttData = false;
+bool                pollingSensor = false;
 
 
 unsigned int        pollingDataPeriod = PERIOD_SECOND_1*4;        //DEFAULT wait time for sending data
@@ -185,6 +186,7 @@ bool                blink = true;
 int                 blinkDelay = 500;
 
 char                command;
+bool                demoMode = false;
 bool                disableSecurity = false;
 
 bool                isDay = true;
@@ -324,7 +326,8 @@ void setup()
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
 void loop() 
 {
-  currentMillis = millis();                                           //
+  currentMillis = millis();     
+
 
   if(currentMillis - mqttLoopPreviousMillis > 200){
     mqttPubSub.loop();                                                //call often (docs), if called too fast could occur MQTT issues
@@ -332,8 +335,9 @@ void loop()
   }
 
   
-  if(currentMillis - pollingPreviousMillis > pollingDataPeriod || sendMqttData)       //sensor polling is splitted from INTERENET activities
+  if(currentMillis - pollingPreviousMillis > pollingDataPeriod || pollingSensor)       //sensor polling is splitted from INTERENET activities
   {
+    Serial.println(pollingDataPeriod);
     Serial.println("Start Logics");
     logics();
     Serial.println("End Logics");
@@ -341,6 +345,7 @@ void loop()
     lightPeriodPassed = currentMillis - lightPreviousMillis;
 
     pollingPreviousMillis = currentMillis;
+    pollingSensor = false;
   }
 
   
@@ -419,7 +424,7 @@ void loop()
       }
     }else{
       if (currentMillis - blinkPreviousMillis >= blinkDelay){
-        blinkDelay = 1000;
+        blinkDelay = 2500;
         digitalWrite(ONBOARD_LED, blink);
         blink = !blink;
         blinkPreviousMillis = currentMillis;
@@ -535,8 +540,13 @@ void commandExecutor(char command){
   switch (command) {
     case 'd':
       sendMqttData = true;
+      pollingSensor = true;
       Serial.println("Command: Sending Data");
     break;
+    case 'C':
+      demoMode = true;
+      logics();
+      break;
     case 'w':
       wifiSetup();
     break;
@@ -582,7 +592,6 @@ void waterPumpLogic(bool logicState){
   else{
     digitalWrite(WATER_PUMP, RELAY_OFF);
   }
-
 }
 
 //@param logicState set the state of air pump to this
@@ -716,14 +725,30 @@ void logics(){
     fanLogic(false);
   }else{
     Serial.println("General Button is ON");
-    lightLogic(lightState);
-    floatSensorLogic();
-    waterPumpLogic(waterPumpState);
-    airPumpLogic(airPumpState);
-    fanLogic(fanState);
-    am2320Logic();
-    tdsLogic();
-    phLogic();
+    if(!demoMode){ 
+      lightLogic(lightState);
+      floatSensorLogic();
+      waterPumpLogic(waterPumpState);
+      airPumpLogic(airPumpState);
+      fanLogic(fanState);
+      am2320Logic();
+      tdsLogic();
+      phLogic();
+    }else{
+      Serial.println("DEMO MODE ON");
+      lightONPeriod = 15000;
+      lightOFFPeriod = 15000;
+      floatSensorState = true;
+      disableSecurity = true;
+      waterPumpLogic(false);
+      airPumpLogic(true);
+      fanLogic(true);
+      am2320Logic();
+      tdsLogic();
+      phLogic();
+      demoMode = false;
+    }
+
   }
   
 }
@@ -778,15 +803,13 @@ void mqttStates(){
 
 }
 
+//convert hassio mqtt publish string to bool
 bool stringToBool(String s){
   if(s == "on")
     return true;
   else
     return false;
-  
 }
-        
-
 
 //read the message from subscribed topic and do the logic
 void mqttReceiverCallback(char* topic, byte* payload, unsigned int length){
