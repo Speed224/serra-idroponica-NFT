@@ -418,7 +418,12 @@ void loop()
         blinkPreviousMillis = currentMillis;
       }
     }else{
-      digitalWrite(ONBOARD_LED, LOW);
+      if (currentMillis - blinkPreviousMillis >= blinkDelay){
+        blinkDelay = 1000;
+        digitalWrite(ONBOARD_LED, blink);
+        blink = !blink;
+        blinkPreviousMillis = currentMillis;
+      }
     }
   }
   
