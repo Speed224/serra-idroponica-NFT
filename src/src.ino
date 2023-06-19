@@ -45,6 +45,8 @@ const byte                GENERAL_BUTTON = 5;
 const byte                ONBOARD_LED = 2;
 
 const String              LIGHT_NAME = "_light";
+const String              LIGHT_RECOVER_NAME = "_light_recover";
+const String              ISDAY_RECOVER_NAME = "_isday_recover";
 const String              LIGHT_ON_NAME = "_light_on";
 const String              LIGHT_OFF_NAME = "_light_off";
 const String              WATER_PUMP_NAME = "_waterpump";
@@ -86,9 +88,11 @@ const String        MQTT_TOPIC_STATE_SUFFIX = "/state";
 const String        MQTT_TOPIC_COMMAND_SUFFIX = "/command";
 const String        MQTT_TOPIC_OPTION_SUFFIX = "/option";
 
+const String        MQTT_TOPIC_HA_SYNC = MQTT_TOPIC_HA_PREFIX + MQTT_TOPIC_COMMAND_SUFFIX.substring(1);
 
 
-const String        MQTT_TOPIC_OPTION = MQTT_TOPIC_HA_PREFIX + MQTT_TOPIC_STATUS + MQTT_TOPIC_OPTION_SUFFIX;
+
+const String        MQTT_TOPIC_SERRA_SYNC = MQTT_TOPIC_HA_PREFIX + MQTT_TOPIC_STATUS + "/sync";
 const String        MQTT_TOPIC_COMMAND = MQTT_TOPIC_HA_PREFIX + MQTT_TOPIC_STATUS + MQTT_TOPIC_COMMAND_SUFFIX;
 const String        MQTT_TOPIC_HA_STATUS = MQTT_TOPIC_HA_PREFIX + "status";
 
@@ -112,7 +116,8 @@ const String        MQTT_WATER_QUALITY_TOPIC_STATE =  MQTT_TOPIC_HA_PREFIX + "se
 const String        MQTT_FLOAT_SENSOR_TOPIC =  MQTT_TOPIC_HA_PREFIX + "binary_sensor/" + MQTT_TOPIC_STATUS + FLOAT_SENSOR_NAME;
 //OPTIONS STATE
 const String        MQTT_SECURITY_SWITCH_TOPIC =  MQTT_TOPIC_HA_PREFIX + "switch/" + MQTT_TOPIC_STATUS + SECURITY_SWITCH_NAME;
-const String        MQTT_LIGHT_TIME_TOPIC =  MQTT_LIGHT_TOPIC + MQTT_TOPIC_OPTION_SUFFIX;
+const String        MQTT_LIGHT_RECOVER_TOPIC =  MQTT_TOPIC_HA_PREFIX + "number/" + MQTT_TOPIC_STATUS + LIGHT_RECOVER_NAME;
+const String        MQTT_ISDAY_RECOVER_TOPIC =  MQTT_TOPIC_HA_PREFIX + "binary_sensor/" + MQTT_TOPIC_STATUS + ISDAY_RECOVER_NAME;
 const String        MQTT_LIGHT_ON_TIME_TOPIC =  MQTT_TOPIC_HA_PREFIX + "number/" + MQTT_TOPIC_STATUS + LIGHT_ON_NAME;
 const String        MQTT_LIGHT_OFF_TIME_TOPIC =  MQTT_TOPIC_HA_PREFIX + "number/" + MQTT_TOPIC_STATUS + LIGHT_OFF_NAME;
 const String        MQTT_SEND_DATA_PERIOD_TOPIC =  MQTT_TOPIC_HA_PREFIX + "number/" + MQTT_TOPIC_STATUS + SEND_DATA_PERIOD_NAME;
@@ -123,17 +128,16 @@ const String        MQTT_POLLING_PERIOD_TOPIC =  MQTT_TOPIC_HA_PREFIX + "number/
 
 
 
-const int           topicsNumber = 13;
+const int           topicsNumber = 12;
 const String        topics[topicsNumber] = {
                                             MQTT_TOPIC_HA_STATUS, 
-                                            MQTT_TOPIC_OPTION, 
+                                            MQTT_TOPIC_SERRA_SYNC, 
                                             MQTT_TOPIC_COMMAND, 
                                             (MQTT_LIGHT_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX), 
                                             (MQTT_WATER_PUMP_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX),
                                             (MQTT_AIR_PUMP_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX),
                                             (MQTT_FAN_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX),
                                             (MQTT_SECURITY_SWITCH_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX),
-                                            MQTT_LIGHT_TIME_TOPIC,
                                             (MQTT_LIGHT_ON_TIME_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX),
                                             (MQTT_LIGHT_OFF_TIME_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX),
                                             (MQTT_SEND_DATA_PERIOD_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX),
@@ -256,11 +260,6 @@ void setup()
   Wire.begin();
   am2320.setWire(&Wire);
 
-/*-----------------------------------------------------------------------------------------------------------------------------------------------*/
-/*------------------------------------LOGIC------------------------------------------------------------------------------------------------------*/
-/*-----------------------------------------------------------------------------------------------------------------------------------------------*/
-  logics();
-
 
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
 /*------------------------------------CONNECTIONS------------------------------------------------------------------------------------------------*/
@@ -313,6 +312,11 @@ void setup()
   Serial.print("SW Rev: ");
   Serial.println(SOFTWARE_VERSION);
   Serial.println("----------------------------------------------");
+
+/*-----------------------------------------------------------------------------------------------------------------------------------------------*/
+/*------------------------------------LOGIC------------------------------------------------------------------------------------------------------*/
+/*-----------------------------------------------------------------------------------------------------------------------------------------------*/
+  logics();
 }
 
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
@@ -324,14 +328,15 @@ void loop()
 
   if(currentMillis - mqttLoopPreviousMillis > 200){
     mqttPubSub.loop();                                                //call often (docs), if called too fast could occur MQTT issues
-
     mqttLoopPreviousMillis = currentMillis;                           //save current millis in previous for offsetting
   }
 
   
-  if(currentMillis - pollingPreviousMillis > pollingDataPeriod)       //sensor polling is splitted from INTERENET activities
+  if(currentMillis - pollingPreviousMillis > pollingDataPeriod || sendMqttData)       //sensor polling is splitted from INTERENET activities
   {
+    Serial.println("Start Logics");
     logics();
+    Serial.println("End Logics");
 
     lightPeriodPassed = currentMillis - lightPreviousMillis;
 
@@ -357,18 +362,19 @@ void loop()
     }   
 
   //is called when sendDataPeriod time pass or sendMqttData is true, usefull for instant sensor refresh
-  if(currentMillis - dataPreviousMillis > sendDataPeriod || sendMqttData)
+  if((currentMillis - dataPreviousMillis > sendDataPeriod || sendMqttData) && !firstBoot)
   {
     //if mqtt is not connected try to connect else send data
-    if(!mqttPubSub.connected())
-      mqttConnect();
-    else{
+    if(!mqttPubSub.connected()){
+      //mqttConnect();
+      if(WiFi.status() != WL_CONNECTED)
+        Serial.println("Wifi not connected");
+      else
+        Serial.println("Mqtt not connected");
+    }else{
       mqttStates();
-
-      
-      sendMqttData = false;
     }
-
+    sendMqttData = false;
     dataPreviousMillis = currentMillis;
   }
     
@@ -395,20 +401,7 @@ void loop()
     }
   }
 
-  
-  
-  //every minutes check if there is wifi connection else try to reconnect
-  if (currentMillis - wifiPreviousMillis >= PERIOD_MINUTE_1) {
-    if(WiFi.status() != WL_CONNECTED){
-      wifiSetup();
-    }
-    else{
-      digitalWrite(ONBOARD_LED, LOW);
-    }
-
-    wifiPreviousMillis = currentMillis;
-  }
-
+  // WIFI and MQTT connection onboard led FEEDBACK
   if(WiFi.status() != WL_CONNECTED){
       blinkDelay = 500;
     if (currentMillis - blinkPreviousMillis >= blinkDelay){
@@ -428,12 +421,27 @@ void loop()
       digitalWrite(ONBOARD_LED, LOW);
     }
   }
+  
+  //every minutes check if there is wifi connection else try to reconnect
+  if (currentMillis - wifiPreviousMillis >= PERIOD_MINUTE_1) {
+    if(WiFi.status() != WL_CONNECTED){
+      wifiSetup();
+    }
+    if(WiFi.status() == WL_CONNECTED){
+      mqttConnect();
+    }
+
+    wifiPreviousMillis = currentMillis;
+  }
+
+  
 
   //read command from serial
   if(Serial.available())
     command = Serial.read();
   commandExecutor(command);  
 
+  delay(1);
 }
 
 
@@ -443,6 +451,7 @@ void loop()
 void wifiSetup() 
 {
   WiFi.disconnect();
+  delay(100);
   WiFi.mode(WIFI_STA);        //define connection tipe
 
   int counter = 0;
@@ -480,7 +489,7 @@ void wifiSetup()
 
 void mqttConnect() {
   mqttPubSub.disconnect();
-  if (WiFi.status() == WL_CONNECTED){
+
     if(!mqttPubSub.connected()){
       Serial.print("Attempting MQTT connection...");
       // attempt to connect
@@ -491,16 +500,15 @@ void mqttConnect() {
         //only the first time is connected to MQTT send discovery info
         if (firstBoot){
           mqttHomeAssistantDiscovery();
+          Serial.println("PUBLISH SYNC HA MESSAGE");
+          mqttPubSub.publish(MQTT_TOPIC_HA_SYNC.c_str(), "syncserra");
         }
       }else {
         Serial.print("failed, rc=");
         Serial.print(mqttPubSub.state());
         Serial.println();
       }
-    } 
-  }else{
-    Serial.println("Cannot connect to mqtt because wifi is offline");
-  }
+    }
 }
 
 //subscribes to defined topics
@@ -526,16 +534,16 @@ void commandExecutor(char command){
     break;
     case 'w':
       wifiSetup();
+    break;
+    case 'm':
       mqttConnect();
+    break;
+    case 'M':
+      mqttPubSub.disconnect();
     break;
     case 'R':
       ESP.restart();
     break;
-    case 'i':
-      isDay = false;
-    break;
-    case 'I':
-      isDay = true;
     break;
     case 'h':
     case 'H':
@@ -715,23 +723,31 @@ void logics(){
   
 }
 
+void syncWithServer(){
+  
+}
+
 //check the states and send to MQTT server
 void mqttStates(){
   Serial.println("MQTT: Sending Data");
   
   //If the server is slow put small delay between messages
-  mqttPubSub.publish((MQTT_LIGHT_TOPIC + MQTT_TOPIC_STATE_SUFFIX).c_str(), (lightState ? "ON" : "OFF"));
+  mqttPubSub.publish((MQTT_LIGHT_TOPIC + MQTT_TOPIC_STATE_SUFFIX).c_str(), (lightState ? "ON" : "OFF"), true);
   delay(10);
-  mqttPubSub.publish((MQTT_FLOAT_SENSOR_TOPIC + MQTT_TOPIC_STATE_SUFFIX).c_str(), (floatSensorState ? "ON" : "OFF"));
-  mqttPubSub.publish((MQTT_WATER_PUMP_TOPIC + MQTT_TOPIC_STATE_SUFFIX).c_str(), (waterPumpState ? "ON" : "OFF"));
-  mqttPubSub.publish((MQTT_AIR_PUMP_TOPIC + MQTT_TOPIC_STATE_SUFFIX).c_str(), (airPumpState ? "ON" : "OFF"));
-  mqttPubSub.publish((MQTT_FAN_TOPIC + MQTT_TOPIC_STATE_SUFFIX).c_str(), (fanState ? "ON" : "OFF"));
-  mqttPubSub.publish((MQTT_SECURITY_SWITCH_TOPIC + MQTT_TOPIC_STATE_SUFFIX).c_str(), (disableSecurity ? "ON" : "OFF"));
+  mqttPubSub.publish((MQTT_FLOAT_SENSOR_TOPIC + MQTT_TOPIC_STATE_SUFFIX).c_str(), (floatSensorState ? "ON" : "OFF"), true);
+  mqttPubSub.publish((MQTT_WATER_PUMP_TOPIC + MQTT_TOPIC_STATE_SUFFIX).c_str(), (waterPumpState ? "ON" : "OFF"), true);
+  mqttPubSub.publish((MQTT_AIR_PUMP_TOPIC + MQTT_TOPIC_STATE_SUFFIX).c_str(), (airPumpState ? "ON" : "OFF"), true);
+  mqttPubSub.publish((MQTT_FAN_TOPIC + MQTT_TOPIC_STATE_SUFFIX).c_str(), (fanState ? "ON" : "OFF"), true);
+  mqttPubSub.publish((MQTT_SECURITY_SWITCH_TOPIC + MQTT_TOPIC_STATE_SUFFIX).c_str(), (disableSecurity ? "ON" : "OFF"), true);
   delay(10);
   mqttPubSub.publish((MQTT_LIGHT_ON_TIME_TOPIC + MQTT_TOPIC_STATE_SUFFIX).c_str(), String(lightONPeriod/PERIOD_HOUR_1).c_str(), true);
   mqttPubSub.publish((MQTT_LIGHT_OFF_TIME_TOPIC + MQTT_TOPIC_STATE_SUFFIX).c_str(), String(lightOFFPeriod/PERIOD_HOUR_1).c_str(), true);
   mqttPubSub.publish((MQTT_SEND_DATA_PERIOD_TOPIC + MQTT_TOPIC_STATE_SUFFIX).c_str(), String(sendDataPeriod/PERIOD_SECOND_1).c_str(), true);
   mqttPubSub.publish((MQTT_POLLING_PERIOD_TOPIC + MQTT_TOPIC_STATE_SUFFIX).c_str(), String(pollingDataPeriod/PERIOD_SECOND_1).c_str(), true);
+  delay(10);
+  mqttPubSub.publish((MQTT_LIGHT_RECOVER_TOPIC + MQTT_TOPIC_STATE_SUFFIX).c_str(), String(lightPeriodPassed/PERIOD_HOUR_1).c_str(), true);
+  mqttPubSub.publish((MQTT_ISDAY_RECOVER_TOPIC + MQTT_TOPIC_STATE_SUFFIX).c_str(), (isDay ? "ON" : "OFF"), true);
+
 
   //////////////
  // AM2320 ////
@@ -755,23 +771,16 @@ void mqttStates(){
   serializeJson(payload, strPayload);
   mqttPubSub.publish(MQTT_WATER_QUALITY_TOPIC_STATE.c_str(), strPayload.c_str());
 
-  ///////////////////
- // LIGHT CYCLE ////
-///////////////////
-  //if is not firstboot or is firstboot but for some reason the message is not retained,
-  // we wait 15second and send the first retained message
-  if(!firstBoot || (firstBoot && (currentMillis > 15000))){
-    payload.clear();
-    strPayload.clear();
-
-    payload["lightperiodpassed"] = lightPeriodPassed;
-    payload["isday"] = isDay;
-
-    serializeJson(payload, strPayload); 
-    mqttPubSub.publish(MQTT_LIGHT_TIME_TOPIC.c_str(), strPayload.c_str(), true);
-  }
-
 }
+
+bool stringToBool(String s){
+  if(s == "on")
+    return true;
+  else
+    return false;
+  
+}
+        
 
 
 //read the message from subscribed topic and do the logic
@@ -819,16 +828,35 @@ void mqttReceiverCallback(char* topic, byte* payload, unsigned int length){
     commandExecutor((char)payload[0]);
   }
 
-  //TODO SYNC FUNCTION
-  if(String(topic) == String(MQTT_LIGHT_TIME_TOPIC)){
+  //SYNC FUNCTION
+  if(String(topic) == String(MQTT_TOPIC_SERRA_SYNC)){
     deserializeJson(json, payload);
 
-    if(firstBoot){
-      lightPeriodBeforeReset = json["lightperiodpassed"];
-      isDay = json["isday"];
-      lightLogic(isDay);
-      firstBoot = false;
-    }
+    airPumpState = stringToBool(json["airpump"]);
+    waterPumpState = stringToBool(json["waterpump"]);
+    fanState = stringToBool(json["fan"]);
+    lightState = stringToBool(json["light"]);
+    isDay = stringToBool(json["isday"]);
+    lightPeriodBeforeReset = (int)json["light_recover"] * PERIOD_HOUR_1;
+    lightONPeriod = (int)json["light_on"] * PERIOD_HOUR_1;
+    lightOFFPeriod = (int)json["light_off"] * PERIOD_HOUR_1;
+    sendDataPeriod = (int)json["sending"] * PERIOD_SECOND_1;
+    pollingDataPeriod = (int)json["polling"] * PERIOD_SECOND_1;
+
+
+    if(lightONPeriod <= 0)
+      lightONPeriod = 1 * PERIOD_HOUR_1;
+    if(lightOFFPeriod <= 0)
+      lightOFFPeriod = 1 * PERIOD_HOUR_1;
+    if(sendDataPeriod < 5)
+      sendDataPeriod = 5 * PERIOD_SECOND_1;
+    if(pollingDataPeriod < 4)
+      pollingDataPeriod = 4 * PERIOD_SECOND_1;
+    
+    
+    logics();
+    mqttStates();
+    firstBoot = false;
   }
 
   //LIGHT ON TIME FROM MQTT MULTIPLIED PER PERIOD_HOUR_1
@@ -888,7 +916,7 @@ void mqttReceiverCallback(char* topic, byte* payload, unsigned int length){
   if(String(topic) == String((MQTT_WATER_PUMP_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX))) 
   {
     //if there is water or security is true
-    if(floatSensorState || disableSecurity){
+    if(disableSecurity){
       if(message == "ON")
         waterPumpLogic(true);
       else
@@ -933,7 +961,7 @@ void mqttHomeAssistantDiscovery()
   String payload;
   String strPayload;
 
-  int sendDelay = 50;
+  int sendDelay = 100;
 
   if(mqttPubSub.connected())
   {
@@ -974,8 +1002,50 @@ void mqttHomeAssistantDiscovery()
 
     device.clear();
     identifiers.clear();
+
+  /////////////////////
+ // LIGHT RECOVER ////
+/////////////////////
+    delay(sendDelay);
+    
+    payload.clear();
+    strPayload.clear();
+
+    discoveryTopic = MQTT_LIGHT_RECOVER_TOPIC + MQTT_TOPIC_DISCOVERY_SUFFIX;
+
+    payload["name"] = DEVICE_NAME + LIGHT_RECOVER_NAME;
+    payload["unique_id"] = UNIQUE_ID + LIGHT_RECOVER_NAME;
+    payload["state_topic"] = (MQTT_LIGHT_RECOVER_TOPIC + MQTT_TOPIC_STATE_SUFFIX);
+    payload["command_topic"] = (MQTT_LIGHT_RECOVER_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX);
+
+    serializeJsonPretty(payload, Serial);
+    Serial.println(" ");
+    serializeJson(payload, strPayload);
+
+    mqttPubSub.publish(discoveryTopic.c_str(), strPayload.c_str());
+  /////////////////////
+ // ISDAY RECOVER ////
+/////////////////////
+    delay(sendDelay);
+    
+    payload.clear();
+    strPayload.clear();
+
+    discoveryTopic = MQTT_ISDAY_RECOVER_TOPIC + MQTT_TOPIC_DISCOVERY_SUFFIX;
+
+    payload["name"] = DEVICE_NAME + ISDAY_RECOVER_NAME;
+    payload["unique_id"] = UNIQUE_ID + ISDAY_RECOVER_NAME;
+    payload["state_topic"] = (MQTT_ISDAY_RECOVER_TOPIC + MQTT_TOPIC_STATE_SUFFIX);
+
+
+
+    serializeJsonPretty(payload, Serial);
+    Serial.println(" ");
+    serializeJson(payload, strPayload);
+
+    mqttPubSub.publish(discoveryTopic.c_str(), strPayload.c_str());
   ////////////////
- // LIGHT_ON ////
+ // LIGHT ON ////
 ////////////////
     delay(sendDelay);
     
@@ -996,7 +1066,7 @@ void mqttHomeAssistantDiscovery()
     mqttPubSub.publish(discoveryTopic.c_str(), strPayload.c_str());
 
   /////////////////
- // LIGHT_OFF ////
+ // LIGHT OFF ////
 /////////////////
     delay(sendDelay);
     
@@ -1017,7 +1087,7 @@ void mqttHomeAssistantDiscovery()
     mqttPubSub.publish(discoveryTopic.c_str(), strPayload.c_str());
 
   //////////////////
- // WATER_PUMP ////
+ // WATER PUMP ////
 //////////////////
     delay(sendDelay);
     
@@ -1039,7 +1109,7 @@ void mqttHomeAssistantDiscovery()
     mqttPubSub.publish(discoveryTopic.c_str(), strPayload.c_str());
 
   ////////////////
- // AIR_PUMP ////
+ // AIR PUMP ////
 ////////////////
     delay(sendDelay);
 
@@ -1217,7 +1287,7 @@ void mqttHomeAssistantDiscovery()
     mqttPubSub.publish(discoveryTopic.c_str(), strPayload.c_str());
 
   ///////////////////////////
- // SENDING_DATA_PERIOD ////
+ // SENDING DATA PERIOD ////
 ///////////////////////////
     delay(sendDelay);
     
@@ -1238,7 +1308,7 @@ void mqttHomeAssistantDiscovery()
     mqttPubSub.publish(discoveryTopic.c_str(), strPayload.c_str());
 
   ///////////////////////////
- // POLLING_DATA_PERIOD ////
+ // POLLING DATA PERIOD ////
 ///////////////////////////
     delay(sendDelay);
     
