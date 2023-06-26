@@ -1,5 +1,3 @@
-//TODO CHECK WHEN MQTT IS OFFLINE
-
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
 /*------------------------------------Include Files----------------------------------------------------------------------------------------------*/
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
@@ -45,10 +43,10 @@ const byte                GENERAL_BUTTON = 5;
 const byte                ONBOARD_LED = 2;
 
 const String              LIGHT_NAME = "_light";
-const String              LIGHT_RECOVER_NAME = "_light_recover";
-const String              ISDAY_RECOVER_NAME = "_isday_recover";
-const String              LIGHT_ON_NAME = "_light_on";
-const String              LIGHT_OFF_NAME = "_light_off";
+const String              LIGHT_RECOVER_NAME = "_lightrecover";
+const String              ISDAY_RECOVER_NAME = "_isdayrecover";
+const String              LIGHT_ON_NAME = "_lighton";
+const String              LIGHT_OFF_NAME = "_lightoff";
 const String              WATER_PUMP_NAME = "_waterpump";
 const String              AIR_PUMP_NAME = "_airpump";
 const String              TEMPERATURE_NAME = "_temperature";
@@ -60,6 +58,7 @@ const String              FAN_NAME = "_fan";
 const String              SECURITY_SWITCH_NAME = "_securityswitch";
 const String              SEND_DATA_PERIOD_NAME = "_senddataperiod";
 const String              POLLING_PERIOD_NAME = "_pollingperiod";
+const String              TEMPERATURE_TRIGGER_NAME = "_temperaturetrigger";
 
 
  
@@ -76,7 +75,7 @@ int                 MQTT_PORT = 1883;                                         //
 
 
 const char*         DEVICE_MODEL = "esp32Serra";                              // Hardware Model
-const char*         SOFTWARE_VERSION = "0.8";                                 // Firmware Version
+const char*         SOFTWARE_VERSION = "1.0";                                 // Firmware Version
 const char*         MANUFACTURER = "Speed224";                                // Manufacturer Name
 const String        DEVICE_NAME = "serra";                                    // Device Name
 const String        MQTT_TOPIC_STATUS = "esp32iot/" + DEVICE_NAME;
@@ -120,6 +119,7 @@ const String        MQTT_LIGHT_RECOVER_TOPIC =  MQTT_TOPIC_HA_PREFIX + "number/"
 const String        MQTT_ISDAY_RECOVER_TOPIC =  MQTT_TOPIC_HA_PREFIX + "binary_sensor/" + MQTT_TOPIC_STATUS + ISDAY_RECOVER_NAME;
 const String        MQTT_LIGHT_ON_TIME_TOPIC =  MQTT_TOPIC_HA_PREFIX + "number/" + MQTT_TOPIC_STATUS + LIGHT_ON_NAME;
 const String        MQTT_LIGHT_OFF_TIME_TOPIC =  MQTT_TOPIC_HA_PREFIX + "number/" + MQTT_TOPIC_STATUS + LIGHT_OFF_NAME;
+const String        MQTT_TEMPERATURE_TRIGGER_TOPIC =  MQTT_TOPIC_HA_PREFIX + "number/" + MQTT_TOPIC_STATUS + TEMPERATURE_TRIGGER_NAME;
 const String        MQTT_SEND_DATA_PERIOD_TOPIC =  MQTT_TOPIC_HA_PREFIX + "number/" + MQTT_TOPIC_STATUS + SEND_DATA_PERIOD_NAME;
 const String        MQTT_POLLING_PERIOD_TOPIC =  MQTT_TOPIC_HA_PREFIX + "number/" + MQTT_TOPIC_STATUS + POLLING_PERIOD_NAME;
 
@@ -128,7 +128,7 @@ const String        MQTT_POLLING_PERIOD_TOPIC =  MQTT_TOPIC_HA_PREFIX + "number/
 
 
 
-const int           topicsNumber = 12;
+const int           topicsNumber = 13;
 const String        topics[topicsNumber] = {
                                             MQTT_TOPIC_HA_STATUS, 
                                             MQTT_TOPIC_SERRA_SYNC, 
@@ -141,7 +141,8 @@ const String        topics[topicsNumber] = {
                                             (MQTT_LIGHT_ON_TIME_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX),
                                             (MQTT_LIGHT_OFF_TIME_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX),
                                             (MQTT_SEND_DATA_PERIOD_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX),
-                                            (MQTT_POLLING_PERIOD_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX)
+                                            (MQTT_POLLING_PERIOD_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX),
+                                            (MQTT_TEMPERATURE_TRIGGER_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX)
                                            };
 
 
@@ -159,6 +160,8 @@ short               numberOfSamples = 5;
 String              UNIQUE_ID;
 bool                sendMqttData = false;
 bool                pollingSensor = false;
+byte                temperatureTrigger = 29;
+
 
 
 unsigned int        pollingDataPeriod = PERIOD_SECOND_1*4;        //DEFAULT wait time for sending data
@@ -337,7 +340,6 @@ void loop()
   
   if(currentMillis - pollingPreviousMillis > pollingDataPeriod || pollingSensor)       //sensor polling is splitted from INTERENET activities
   {
-    Serial.println(pollingDataPeriod);
     Serial.println("Start Logics");
     logics();
     Serial.println("End Logics");
@@ -609,7 +611,7 @@ void airPumpLogic(bool logicState){
 //@param logicState set the state of fan to this
 void fanLogic(bool logicState){
   fanState = logicState;
-  if(fanState){
+  if(fanState || temperature >= temperatureTrigger){
     digitalWrite(FAN, RELAY_ON);
   }
   else{
@@ -638,7 +640,6 @@ void am2320Logic(){
   }
 }
 
-//TODO not sure is nedded
 //median algorith for better measurement
 void tdsLogic(){
   float waterTemperature = 20;
@@ -677,8 +678,6 @@ void tdsLogic(){
     tds = (133.42 * compensationVoltage * compensationVoltage * compensationVoltage - 255.86 * compensationVoltage*  compensationVoltage + 857.39 * compensationVoltage) * 0.5;
   }
 }
-
-//TODO not sure is nedded
 
 //median algorith for better measurement
 void phLogic(){
@@ -753,10 +752,6 @@ void logics(){
   
 }
 
-void syncWithServer(){
-  
-}
-
 //check the states and send to MQTT server
 void mqttStates(){
   Serial.println("MQTT: Sending Data");
@@ -777,6 +772,7 @@ void mqttStates(){
   delay(10);
   mqttPubSub.publish((MQTT_LIGHT_RECOVER_TOPIC + MQTT_TOPIC_STATE_SUFFIX).c_str(), String(lightPeriodPassed/PERIOD_HOUR_1).c_str(), true);
   mqttPubSub.publish((MQTT_ISDAY_RECOVER_TOPIC + MQTT_TOPIC_STATE_SUFFIX).c_str(), (isDay ? "ON" : "OFF"), true);
+  mqttPubSub.publish((MQTT_TEMPERATURE_TRIGGER_TOPIC + MQTT_TOPIC_STATE_SUFFIX).c_str(), String(temperatureTrigger).c_str(), true);
 
 
   //////////////
@@ -860,11 +856,12 @@ void mqttReceiverCallback(char* topic, byte* payload, unsigned int length){
   if(String(topic) == String(MQTT_TOPIC_SERRA_SYNC)){
     deserializeJson(json, payload);
 
-    airPumpState = stringToBool(json["airpump"]);
-    waterPumpState = stringToBool(json["waterpump"]);
+    airPumpState = stringToBool(json["air_pump"]);
+    waterPumpState = stringToBool(json["water_pump"]);
     fanState = stringToBool(json["fan"]);
     lightState = stringToBool(json["light"]);
-    isDay = stringToBool(json["isday"]);
+    isDay = stringToBool(json["is_day"]);
+    temperatureTrigger = (int)json["temperature_trigger"];
     lightPeriodBeforeReset = (int)json["light_recover"] * PERIOD_HOUR_1;
     lightONPeriod = (int)json["light_on"] * PERIOD_HOUR_1;
     lightOFFPeriod = (int)json["light_off"] * PERIOD_HOUR_1;
@@ -926,6 +923,17 @@ void mqttReceiverCallback(char* topic, byte* payload, unsigned int length){
     pollingDataPeriod = num * PERIOD_SECOND_1;
     mqttStates();
   }
+
+  //TEMPERATURE TRIGGER
+  if(String(topic) == String((MQTT_TEMPERATURE_TRIGGER_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX))){
+    int num = 29;
+    if(message.toInt() < 100 || message.toInt() > 0) //DEFAULT MIN SECONDS
+      num = message.toInt();
+
+    temperatureTrigger = num;
+    mqttStates();
+  }
+   
    
 
   //LIGHT COMMAND
@@ -939,12 +947,13 @@ void mqttReceiverCallback(char* topic, byte* payload, unsigned int length){
     }
     mqttStates();
   }
+  
 
   //WATER PUMP COMMAND
   if(String(topic) == String((MQTT_WATER_PUMP_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX))) 
   {
     //if there is water or security is true
-    if(disableSecurity){
+    if(disableSecurity || floatSensorState){
       if(message == "ON")
         waterPumpLogic(true);
       else
@@ -1356,7 +1365,26 @@ void mqttHomeAssistantDiscovery()
 
     mqttPubSub.publish(discoveryTopic.c_str(), strPayload.c_str());
 
+  ///////////////////////////
+ // TEMPERATURE TRIGGER ////
+///////////////////////////
+    delay(sendDelay);
+    
+    payload.clear();
+    strPayload.clear();
 
+    discoveryTopic = MQTT_TEMPERATURE_TRIGGER_TOPIC + MQTT_TOPIC_DISCOVERY_SUFFIX;
+
+    payload["name"] = DEVICE_NAME + TEMPERATURE_TRIGGER_NAME;
+    payload["unique_id"] = UNIQUE_ID + TEMPERATURE_TRIGGER_NAME;
+    payload["state_topic"] = (MQTT_TEMPERATURE_TRIGGER_TOPIC + MQTT_TOPIC_STATE_SUFFIX);
+    payload["command_topic"] = (MQTT_TEMPERATURE_TRIGGER_TOPIC + MQTT_TOPIC_COMMAND_SUFFIX);
+
+    serializeJsonPretty(payload, Serial);
+    Serial.println(" ");
+    serializeJson(payload, strPayload);
+
+    mqttPubSub.publish(discoveryTopic.c_str(), strPayload.c_str());
   }
 
 
