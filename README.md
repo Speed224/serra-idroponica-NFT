@@ -13,11 +13,10 @@ I dati della serra vengono inviati tramite il protocollo MQTT, l'utente può con
 GNU GENERAL PUBLIC LICENSE version 3 (GPLv3)
 
 # Sensori:
-- Temperatura e Umidità  DHT11 / DHT22
+- Temperatura e Umidità  AM2320
 - PH
 - EC
 - Galleggiante (livellostato)
-- Fotoresistore (forse)
 
 
 # Attuatori:
@@ -25,27 +24,29 @@ GNU GENERAL PUBLIC LICENSE version 3 (GPLv3)
 - Pompa aria 
 - Ventola
 - LED full spectrum
-- Qualcosa per scaldare (Forse)
+- Qualcosa per scaldare (Futuro)
 
 
 # Materiali generici:
 - Airstone
 - Legno
 - Tubi PVC
-- Serbatoio (Secchio)
+- Serbatoio (scatola)
 - Acqua
 - Materiale per sotto piantina (clay pebbles, coco coir , rock wool)
 - Tubi gomma
 - Raccorderia
-- Nutriente (da capire)
-- Distrubutore (qualcosa per gestire il PH)
-- Siggilanti (forse)
 
 
 # Materiali Elettrici
 - ESP
+- CN1584 (step down regolabile)
+- Modulo Relè
 - Alimentazione
 - Cavi e Cavetti
 
+E' controllabile e impostabile da remoto attraverso messaggi MQTT.
+La serra ha una funzione di sincronizzazione con il server MQTT per riprendere gli stati della luce in caso di caduta dell'alimentazione.
+Ha un pulsante virtuale di sicurezza per comandare la serra manualmente ed uno fisico per metterla in attesa.
 
 
