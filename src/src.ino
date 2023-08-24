@@ -3,6 +3,7 @@
 #include <arduino-timer.h>
 #include <ArduinoHA.h>
 #include <Bounce2.h>
+#include <AM2320_asukiaaa.h>
 
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
 /*------------------------------------I/O Definitions--------------------------------------------------------------------------------------------*/
@@ -31,32 +32,36 @@ const byte          ONBOARD_LED = 2;
 auto timer = timer_create_default();
 
 #define DEBOUNCE_DELAY          50
+
+
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
 /*------------------------------------Public variables-------------------------------------------------------------------------------------------*/
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
-byte                mac[6];
+byte                  mac[6];
 
-WiFiClient          wifiClient;
-Preferences         preferences;
+WiFiClient            wifiClient;
+Preferences           preferences;
+
+AM2320_asukiaaa       am2320;
+float                 temperatureOffset = 2;
 
 Bounce generalButton = Bounce();
-
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
 /*------------------------------------I/O States-------------------------------------------------------------------------------------------------*/
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
-bool                generalButtonState = false;
-bool                lightState = false;
-bool                waterPumpState = false;
-bool                airPumpState = false;
-bool                floatSensorState = false;
-bool                fanState = false;
+bool                  generalButtonState = false;
+bool                  lightState = false;
+bool                  waterPumpState = false;
+bool                  airPumpState = false;
+bool                  floatSensorState = false;
+bool                  fanState = false;
 
 
-String WIFI_SSID;
-String WIFI_PASSWORD;
-String MQTT_SERVER;
-String MQTT_USER;
-String MQTT_PASSWORD;
+String                WIFI_SSID;
+String                WIFI_PASSWORD;
+String                MQTT_SERVER;
+String                MQTT_USER;
+String                MQTT_PASSWORD;
   
 
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
@@ -127,8 +132,8 @@ void setup() {
   pinMode(FLOAT_SENSOR, INPUT_PULLUP);
   attachInterrupt(FLOAT_SENSOR, floatSensorISR, FALLING);
   
-  //Wire.begin();
-  //am2320.setWire(&Wire);
+  Wire.begin();
+  am2320.setWire(&Wire);
 
 
 
@@ -231,7 +236,6 @@ void loop() {
   swFan.onCommand(onFanCommand);
   lLight.onStateCommand(onLightCommand);
 
-  //mqttStates();
 
   timer.tick();
 }
@@ -285,8 +289,8 @@ bool mqttStates(void *){
   swWaterPump.setState(waterPumpState);
   swAirPump.setState(airPumpState);
   swFan.setState(fanState);
-  sTemperature.setValue("30");
-  sHumidity.setValue("47");
+  sTemperature.setValue(String(am2320.temperatureC - temperatureOffset));
+  sHumidity.setValue(String(am2320.humidity));
 
   return true;
 }
