@@ -10,12 +10,12 @@
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
 const byte          LIGHT = 32;
 const byte          WATER_PUMP = 33;
-const byte          TDS = 5;
+const byte          TDS = 35;
 const byte          PH = 34;
 const byte          AIR_PUMP = 19;
 const byte          FLOAT_SENSOR = 17;
 const byte          FAN = 16;
-const byte          GENERAL_BUTTON = 35;
+const byte          GENERAL_BUTTON = 5;
 
 const byte          ONBOARD_LED = 2;
 
@@ -44,6 +44,8 @@ Preferences           preferences;
 
 AM2320_asukiaaa       am2320;
 float                 temperatureOffset = 2;
+float                 temperature;
+float                 humidity;
 
 Bounce generalButton = Bounce();
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
@@ -289,8 +291,13 @@ bool mqttStates(void *){
   swWaterPump.setState(waterPumpState);
   swAirPump.setState(airPumpState);
   swFan.setState(fanState);
-  sTemperature.setValue(String(am2320.temperatureC - temperatureOffset));
-  sHumidity.setValue(String(am2320.humidity));
+  temperature = am2320.temperatureC - temperatureOffset;
+  humidity = am2320.humidity;
+  char temp[5];
+  dtostrf(temperature, 0, 3, temp);
+  sTemperature.setValue(temp);
+  dtostrf(humidity, 0, 3, temp);
+  sHumidity.setValue(temp);
 
   return true;
 }
