@@ -1,3 +1,5 @@
+//TODO: refresh command
+
 #include <WiFi.h>
 #include <Preferences.h>
 #include <arduino-timer.h>
@@ -47,7 +49,9 @@ float                 temperatureOffset = 2;
 float                 temperature;
 float                 humidity;
 
-Bounce generalButton = Bounce();
+Bounce                generalButton = Bounce();
+
+const char*                commandTopic = "data/esp32serra/command";
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
 /*------------------------------------I/O States-------------------------------------------------------------------------------------------------*/
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
@@ -74,7 +78,7 @@ HADevice          device("esp32serra");
 
 HAMqtt            mqtt(wifiClient, device, 12); //always before devices type see documentation
 
-HABinarySensor    bsGeneralButton("generalButton");
+HABinarySensor    bsGeneralButton("generalButton");   
 HABinarySensor    bsFloatSensor("floatSensor");
 HASwitch          swWaterPump("waterPump");
 HASwitch          swAirPump("airPump");
@@ -93,10 +97,13 @@ HASensor          sHumidity("humidity");
 /*------------------------------------Interrupts-------------------------------------------------------------------------------------------------*/
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
 // when float sensor fall
+/*
 void IRAM_ATTR floatSensorISR(){
   waterPumpState = false;
+  digitalWrite(WATER_PUMP, HIGH);
   floatSensorState = false;
 }
+*/
 
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
 /*------------------------------------SETUP------------------------------------------------------------------------------------------------------*/
@@ -132,12 +139,19 @@ void setup() {
 
 
   pinMode(FLOAT_SENSOR, INPUT_PULLUP);
-  attachInterrupt(FLOAT_SENSOR, floatSensorISR, FALLING);
-  
+  //attachInterrupt(FLOAT_SENSOR, floatSensorISR, FALLING);
+
+  //tutti i relè sono spenti
+  digitalWrite(WATER_PUMP, HIGH);
+  digitalWrite(AIR_PUMP, HIGH);
+  digitalWrite(LIGHT, HIGH);
+  digitalWrite(FAN, HIGH);
+
+  floatSensorState = digitalRead(FLOAT_SENSOR);
+  generalButtonManager(digitalRead(GENERAL_BUTTON));
+
   Wire.begin();
   am2320.setWire(&Wire);
-
-
 
   setupWiFi();
 
@@ -211,25 +225,15 @@ void setup() {
 void loop() {
   mqtt.loop();
 
+  floatSensorState = digitalRead(FLOAT_SENSOR);
+  if(!floatSensorState){
+    waterPumpState = false;
+    writeStates();
+  }
+
   generalButton.update();
-
-
   if(generalButton.changed()){
-    if(generalButton.read()){
-      generalButtonState = true;
-      waterPumpState = true;
-      airPumpState = true;
-      floatSensorState = true;
-      //fanState = true;
-      Serial.println("General Button Enabled");
-    }else{
-      generalButtonState = false;
-      waterPumpState = false;
-      airPumpState = false;
-      floatSensorState = false;
-      fanState = false;
-      Serial.println("General Button Disabled");
-    }
+    generalButtonManager(generalButton.read());
   }
 
   bsGeneralButton.setState(generalButtonState);
@@ -242,6 +246,26 @@ void loop() {
   timer.tick();
 }
 
+void generalButtonManager(bool state){
+  if(state){
+      generalButtonState = state;
+      waterPumpState = true;
+      airPumpState = true;
+      fanState = fanState;
+      lightState = true;
+      Serial.println("General Button Enabled");
+      writeStates();
+    }else{
+      generalButtonState = state;
+      waterPumpState = false;
+      airPumpState = false;
+      fanState = false;
+      lightState = false;
+      Serial.println("General Button Disabled");
+      writeStates();
+    }
+}
+
 void setupWiFi() {
   WiFi.disconnect();
   delay(100);
@@ -252,7 +276,8 @@ void setupWiFi() {
   
                               //connecting to a WiFi network
   Serial.print("Connecting to ");
- // Serial.println(WIFI_SSID);
+  Serial.println(WIFI_SSID);
+  Serial.println(WIFI_PASSWORD);
 
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 
@@ -276,12 +301,26 @@ void setupWiFi() {
 }
 
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
+/*------------------------------------FUNCTION---------------------------------------------------------------------------------------------------*/
+/*-----------------------------------------------------------------------------------------------------------------------------------------------*/
+
+void writeStates(){
+  digitalWrite(WATER_PUMP, (waterPumpState ? LOW : HIGH));
+  digitalWrite(AIR_PUMP, (airPumpState ? LOW : HIGH));
+  digitalWrite(FAN, (fanState ? LOW : HIGH));
+  digitalWrite(LIGHT, (lightState ? LOW : HIGH));
+}
+
+/*-----------------------------------------------------------------------------------------------------------------------------------------------*/
 /*------------------------------------TIMER FUNCTION---------------------------------------------------------------------------------------------*/
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
 bool scrivi(void *){
-  Serial.println("5 secondi");
-  mqtt.isConnected() ? Serial.println("true") : Serial.println("false");
-
+  Serial.println("5 secondi timer");
+  mqtt.isConnected() ? Serial.println("Connesso a MQTT") : Serial.println("Non connesso a MQTT");
+  Serial.println("temperatureC: " + String(am2320.temperatureC) + " C");
+  Serial.println("humidity: " + String(am2320.humidity) + " %");
+  Serial.println();
+  Serial.println();
   return true;
 }
 
@@ -291,13 +330,20 @@ bool mqttStates(void *){
   swWaterPump.setState(waterPumpState);
   swAirPump.setState(airPumpState);
   swFan.setState(fanState);
-  temperature = am2320.temperatureC - temperatureOffset;
-  humidity = am2320.humidity;
-  char temp[5];
-  dtostrf(temperature, 0, 3, temp);
-  sTemperature.setValue(temp);
-  dtostrf(humidity, 0, 3, temp);
-  sHumidity.setValue(temp);
+  lLight.setState(lightState);
+
+  if(am2320.update()!=0){
+    Serial.println("Error: Cannot update sensor values.");
+  }else{
+    temperature = am2320.temperatureC - temperatureOffset;
+    humidity = am2320.humidity;
+    char temp[8];
+    dtostrf(temperature, 6, 2, temp);
+    sTemperature.setValue(temp);
+    dtostrf(humidity, 6, 2, temp);
+    sHumidity.setValue(temp);
+  }
+  
 
   return true;
 }
@@ -316,38 +362,58 @@ bool checkWiFi(void *){
 void onConnected() {
   // this method will be called when connection to MQTT broker is established
   Serial.println("Connesso al broker");
+  mqtt.subscribe(commandTopic);
 }
 
 void onMessage(const char* topic, const uint8_t* payload, uint16_t length) {
   // this method will be called each time the device receives an MQTT message
-  
+  String message;
+  for (int i = 0; i < length; i++) {
+    //Serial.print((char)payload[i]);
+    message += (char)payload[i];
+  }
+  char* nothing;
+  if(message == "r"){
+    mqttStates(nothing);
+    Serial.println();
+    Serial.println("Dati inviati");
+    Serial.println();
+
+  }
+
+  if(message == "w"){
+    Serial.println();
+    Serial.println("TODO sensore TDS e PH");
+    Serial.println();
+  }
 }
 
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
 /*------------------------------------MQTT COMMAND-----------------------------------------------------------------------------------------------*/
 /*-----------------------------------------------------------------------------------------------------------------------------------------------*/
-
+// relay works inverted HIGH is low LOW is high
 
 void onWaterPumpCommand(bool state, HASwitch* sender){
   waterPumpState = state;
-  digitalWrite(WATER_PUMP, (waterPumpState ? HIGH : LOW));
+  digitalWrite(WATER_PUMP, (waterPumpState ? LOW : HIGH));
   sender->setState(waterPumpState); // report state back to the Home Assistant
 }
 
 void onAirPumpCommand(bool state, HASwitch* sender){
   airPumpState = state;
-  digitalWrite(AIR_PUMP, (airPumpState ? HIGH : LOW));
+  digitalWrite(AIR_PUMP, (airPumpState ? LOW : HIGH));
   sender->setState(airPumpState); // report state back to the Home Assistant
 }
 
 void onFanCommand(bool state, HASwitch* sender){
   fanState = state;
-  digitalWrite(FAN, (fanState ? HIGH : LOW));
+  digitalWrite(FAN, (fanState ? LOW : HIGH));
   sender->setState(fanState); // report state back to the Home Assistant
 }
 
 void onLightCommand(bool state, HALight* sender) {
   lightState = state;
+  digitalWrite(LIGHT, (lightState ? LOW : HIGH));
   sender->setState(lightState); // report state back to the Home Assistant
 }
 
